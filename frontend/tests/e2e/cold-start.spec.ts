@@ -60,5 +60,5 @@ test("same-origin proxy preserves signup cookies and authenticated access", asyn
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Product ledger" })).toBeVisible();
-  await expect(page.getByText(email)).toBeVisible();
+  await expect(page.locator(".account-email")).toHaveText(email);
 });

@@ -26,6 +26,26 @@ def test_production_accepts_a_long_secret_and_configures_upload_limit(monkeypatc
     assert load_max_upload_bytes() == 4 * 1024 * 1024
 
 
+@pytest.mark.parametrize(("url", "expected"), [
+    (
+        "postgresql://testuser:testpass@db.example:5432/stockwise?sslmode=require",
+        "postgresql+psycopg://testuser:testpass@db.example:5432/stockwise?sslmode=require",
+    ),
+    (
+        "postgres://testuser:testpass@db.example:5432/stockwise?sslmode=require",
+        "postgresql+psycopg://testuser:testpass@db.example:5432/stockwise?sslmode=require",
+    ),
+    (
+        "postgresql+psycopg://testuser:testpass@db.example:5432/stockwise?sslmode=require",
+        "postgresql+psycopg://testuser:testpass@db.example:5432/stockwise?sslmode=require",
+    ),
+])
+def test_load_settings_normalizes_postgresql_url_scheme(url, expected, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("DATABASE_URL", url)
+    assert load_settings().database_url == expected
+
+
 @pytest.mark.parametrize("value", ["0", "-4", "not-a-number"])
 def test_upload_limit_must_be_a_positive_integer(value, monkeypatch):
     monkeypatch.setenv("MAX_UPLOAD_BYTES", value)

@@ -33,6 +33,14 @@ def format_upload_limit(value: int) -> str:
     return f"{value} bytes"
 
 
+def normalize_database_url(url: str) -> str:
+    """Ensure PostgreSQL URLs select the psycopg 3 SQLAlchemy driver."""
+    for scheme in ("postgresql://", "postgres://"):
+        if url.startswith(scheme):
+            return "postgresql+psycopg://" + url[len(scheme):]
+    return url
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -59,7 +67,9 @@ def load_settings() -> Settings:
         if secrets.compare_digest(secret, EXAMPLE_JWT_SECRET):
             raise RuntimeError("JWT_SECRET must not equal the example value in production")
     return Settings(
-        database_url=os.getenv("DATABASE_URL", "postgresql+psycopg://localhost/stockwise"),
+        database_url=normalize_database_url(
+            os.getenv("DATABASE_URL", "postgresql+psycopg://localhost/stockwise")
+        ),
         jwt_secret=secret,
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
         environment=environment,

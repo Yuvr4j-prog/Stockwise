@@ -148,14 +148,20 @@ def test_production_proxy_ip_uses_first_forwarded_address(monkeypatch):
 
 def test_production_auth_cookies_are_secure_and_http_only(anonymous_client, monkeypatch):
     client = anonymous_client
-    csrf = client.get(f"{BASE}/auth/csrf").json()["csrf_token"]
     monkeypatch.setattr(stockwise_api, "settings", replace(stockwise_api.settings, environment="production"))
-    response = client.post(f"{BASE}/auth/signup", headers={"X-CSRF-Token": csrf},
+    csrf_response = client.get(f"https://testserver{BASE}/auth/csrf")
+    csrf = csrf_response.json()["csrf_token"]
+    csrf_cookie = next(cookie for cookie in csrf_response.headers.get_list("set-cookie")
+                       if "stockwise_csrf=" in cookie)
+    assert "Secure" in csrf_cookie
+
+    response = client.post(f"https://testserver{BASE}/auth/signup", headers={"X-CSRF-Token": csrf},
                            json={"email": f"secure-{uuid.uuid4().hex}@example.com", "password": "secure-pass-51"})
     assert response.status_code == 201, response.text
     set_cookie = response.headers.get_list("set-cookie")
-    assert any("stockwise_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie for cookie in set_cookie)
-    assert any("stockwise_csrf=" in cookie and "Secure" in cookie for cookie in set_cookie)
+    session_cookie = next(cookie for cookie in set_cookie if "stockwise_session=" in cookie)
+    assert "HttpOnly" in session_cookie
+    assert "Secure" in session_cookie
 
 
 def test_signup_sets_http_only_session_and_me_returns_own_account(seller):

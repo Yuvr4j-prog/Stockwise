@@ -20,7 +20,7 @@ This arrangement is for a demo or a personal prototype, not a reliable productio
 2. Choose **New project**. Give it a name such as `stockwise`, and choose a region close to the Render region you plan to use.
 3. Create the project on the Free plan for a prototype.
 4. Open **Dashboard → Connect** and copy the PostgreSQL connection string. Keep it private.
-5. Use the direct connection string, or a pooled endpoint configured for session pooling if you have a reason to pool. Change its URI scheme from `postgresql://` to `postgresql+psycopg://`; preserve the generated credentials, host, database, and `sslmode=require` parameters. The backend installs psycopg 3 and needs this SQLAlchemy driver name.
+5. Use the direct connection string, or a pooled endpoint configured for session pooling if you have a reason to pool. StockWise automatically rewrites `postgresql://` and legacy `postgres://` URLs to `postgresql+psycopg://`, preserving the remaining URL including credentials, host, database, and `sslmode=require`. Keeping the explicit `postgresql+psycopg://` scheme in `DATABASE_URL` is also fine.
 
 ## 2. Deploy the API to Render
 
@@ -83,7 +83,7 @@ Then check the Render **Logs** for unexpected exceptions and inspect Vercel **De
 
 | Variable | Used by | Required | Notes |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | Backend, Alembic | Yes | SQLAlchemy URL using `postgresql+psycopg://` |
+| `DATABASE_URL` | Backend, Alembic | Yes | SQLAlchemy URL; `postgresql://` and `postgres://` are normalized automatically, or use `postgresql+psycopg://` explicitly |
 | `JWT_SECRET` | Backend | Yes in production | At least 32 characters; random; no example placeholder |
 | `ENVIRONMENT` | Backend | Yes | Use `production` for secure cookies and production validation |
 | `FRONTEND_ORIGIN` | Backend | Yes | Exact scheme and host for CORS |

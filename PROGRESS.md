@@ -54,6 +54,14 @@ python scripts/smoke_remote.py http://127.0.0.1:8080
 
 The smoke script creates a unique test seller and product and leaves them in the selected database. Use a disposable local database.
 
+## Approved Stage 4 follow-up (2026-11-22)
+
+- `stockwise.config.load_settings` now rewrites `postgresql://` and `postgres://` to `postgresql+psycopg://` and keeps all other URL text unchanged. Tests cover both input schemes, query-string preservation including `sslmode=require`, and the already-explicit scheme. `DEPLOY.md` documents the automatic rewrite and the explicit form.
+- The production-cookie API test obtains its CSRF cookie after setting production mode, checks that response's CSRF cookie for `Secure`, then verifies the signup session cookie is `Secure` and `HttpOnly`. HTTPS is used for the TestClient requests so Secure cookies are sent as a browser would send them.
+- The cold-start E2E assertion now scopes to `.account-email`, avoiding the duplicate hidden mobile account element.
+- Backend test output: `81 passed, 77 skipped, 1 warning in 18.07s`. The skips require PostgreSQL; `DATABASE_URL` is unset, no root `.env` file exists, Docker is unavailable, PostgreSQL on `127.0.0.1:5432` gives no response, and `/api/v1/health/db` on `127.0.0.1:8080` refuses the connection. The real-PostgreSQL suite and the updated production-cookie integration test could not run in this environment.
+- Frontend `npm run typecheck` passed. The targeted Playwright test could not reach the local app: `ERR_CONNECTION_REFUSED` at `http://127.0.0.1:8080/signup`. Its locator correction is typechecked but not browser-verified here.
+
 ## Stage 3 visual direction choices
 
 1. **Market ledger (selected):** warm paper and charcoal with a restrained rust accent; pair Source Serif 4 headings with IBM Plex Mono figures; use a dense, keyboard-friendly product ledger as the main workspace, with a narrow market-board strip for budget and plan totals. The plan result also uses a purchase-slip summary beside the full table.
