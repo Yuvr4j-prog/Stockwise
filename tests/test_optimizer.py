@@ -71,6 +71,36 @@ def test_named_risk_multipliers_are_applied_on_top_of_numeric_scale():
     assert solve_plan(product, 100, risk_mode="aggressive", demand_scale=0.5).items[0].quantity == 5
 
 
+@pytest.mark.parametrize(("risk_mode", "expected_units"), [
+    ("safe", 30),
+    ("balanced", 38),
+    ("aggressive", 44),
+])
+def test_fractional_demand_is_scaled_then_floored_for_each_risk_mode(risk_mode, expected_units):
+    result = solve_plan([ProductOption("x", 1, 1, 38.33)], 100, risk_mode=risk_mode)
+    assert result.items[0].quantity == expected_units
+
+
+def test_fractional_forecast_override_is_scaled_then_floored():
+    result = solve_plan(
+        [ProductOption("x", 1, 1, 50)], 100,
+        risk_mode="balanced", forecast_overrides={"x": 37.5},
+    )
+    assert result.items[0].quantity == 37
+
+
+def test_fractional_demand_hand_example_with_three_products():
+    products = [
+        ProductOption("A", 3, 5, 2.4),
+        ProductOption("B", 4, 7, 1.8),
+        ProductOption("C", 5, 8, 1.1),
+    ]
+    result = solve_plan(products, 10, risk_mode="balanced")
+    assert {item.sku: item.quantity for item in result.items} == {"A": 2, "B": 1, "C": 0}
+    assert result.total_spent == 10
+    assert result.total_profit == 17
+
+
 def test_moq_is_optional_and_non_multiple_minimum_rounds_to_full_packs():
     optional = solve_plan([ProductOption("x", 2, 4, 8, min_qty=5, pack_size=3)], 4)
     assert optional.items[0].quantity == 0
@@ -139,12 +169,14 @@ def test_milp_matches_brute_force_for_300_random_constrained_cases():
             force_exclude = not force_include and rng.random() < 0.12
             products.append(ProductOption(
                 sku=f"{index}", cost=rng.randint(0, 9), profit=rng.randint(-2, 15),
-                demand=rng.randint(0, 6), min_qty=rng.randint(0, 6), pack_size=rng.randint(1, 3),
+                demand=rng.randint(0, 6) + rng.choice([0, 0.25, 0.5, 0.75]),
+                min_qty=rng.randint(0, 6), pack_size=rng.randint(1, 3),
                 force_include=force_include, force_exclude=force_exclude,
             ))
         budget = rng.randint(0, 24)
         storage = rng.randint(0, 12)
-        overrides = {p.sku: rng.randint(0, 7) for p in products if rng.random() < 0.15}
+        overrides = {p.sku: rng.randint(0, 7) + rng.choice([0, 0.25, 0.5, 0.75])
+                     for p in products if rng.random() < 0.15}
         all_choices = []
         for p in products:
             cap_units = floor(overrides.get(p.sku, p.demand) * demand_scale * risk_values[risk_mode] + 1e-9)

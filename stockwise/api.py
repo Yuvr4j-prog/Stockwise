@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -35,6 +36,7 @@ JWT_ALGORITHM = "HS256"
 JWT_COOKIE = "stockwise_session"
 CSRF_COOKIE = "stockwise_csrf"
 JWT_TTL_SECONDS = 60 * 60 * 12
+logger = logging.getLogger("stockwise.api")
 
 app = FastAPI(title="StockWise API", version="1.0.0", docs_url="/docs", openapi_url="/openapi.json")
 app.add_middleware(
@@ -71,6 +73,12 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
 
 @app.exception_handler(Exception)
 async def unexpected_error_handler(request: Request, exc: Exception) -> Response:
+    logger.error(
+        "Unhandled exception for %s %s",
+        request.method,
+        request.url.path,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
     from fastapi.responses import JSONResponse
     return JSONResponse({"error": {"code": "internal_error", "message": "An unexpected server error occurred", "details": None}}, status_code=500)
 

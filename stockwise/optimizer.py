@@ -115,7 +115,7 @@ def solve_plan(
     for i, p in enumerate(products):
         if not _finite_number(p.cost) or not _finite_number(p.profit) or p.cost < 0:
             raise ValueError(f"invalid cost/profit for {p.sku!r}")
-        if not _whole_number(p.demand) or p.demand < 0:
+        if not _finite_number(p.demand) or p.demand < 0:
             raise ValueError(f"{p.sku}: demand must be a finite non-negative quantity")
         if not _whole_number(p.min_qty) or p.min_qty < 0:
             raise ValueError(f"{p.sku}: MOQ must be a non-negative whole number")

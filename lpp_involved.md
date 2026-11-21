@@ -21,7 +21,10 @@ For each product `i`, let:
 - `y_i` = integer number of packs ordered;
 - `z_i ∈ {0,1}` = whether an MOQ/forced product is activated;
 - `s_i` = units per pack, `c_i` = unit cost, `p_i` = unit profit;
-- `d_i` = forecast after override and risk scaling, `u_i = floor(d_i / s_i)` = pack cap;
+- `f_i` = statistical forecast or seller override (both may be fractional);
+- `r_i` = named risk multiplier (`0.80`, `1.00`, or `1.15`) and `q` = optional numeric scale;
+- `D_i = floor(f_i × r_i × q + ε)` = whole-unit demand cap after risk scaling (`ε=10⁻⁹` only avoids binary floating-point underflow at an integer boundary);
+- `u_i = floor(D_i / s_i)` = pack cap;
 - `m_i = ceil(MOQ_i / s_i)` = minimum packs that satisfy MOQ;
 - `B` = budget and `S` = optional storage capacity in units.
 
@@ -50,7 +53,7 @@ This is a **MILP**. The objective and constraints are linear; pack quantities `y
 
 - `stockwise/forecasting.py::forecast` first adjusts each flagged observation to `max(observed_sales, mean(unflagged_sales))`, then runs the selected method. If every observation is flagged it uses the recorded values and marks confidence low. A most-recent flagged sale remains a final one-week lower bound. No historical flagged maximum is carried forward as a permanent floor.
 - `stockwise/api.py::_product_forecast` applies a seller's forecast override when set; otherwise it uses the statistical forecast.
-- `stockwise/optimizer.py::solve_plan` applies `d_i = forecast_i × demand_scale × risk_multiplier`, then floors the cap to whole units and to full packs. Named multipliers are Safe `0.80`, Balanced `1.00`, Aggressive `1.15`; numeric `demand_scale` multiplies the named factor.
+- `stockwise/optimizer.py::solve_plan` accepts finite nonnegative fractional forecast demand and overrides, applies `forecast × demand_scale × risk_multiplier`, floors to the whole-unit cap `D_i`, then floors again to complete packs. Named multipliers are Safe `0.80`, Balanced `1.00`, Aggressive `1.15`; numeric `demand_scale` multiplies the named factor. The API continues to return the unrounded forecast for display while the allocation remains integer-valued.
 
 ### Mapping constraints to code
 
@@ -66,7 +69,7 @@ This is a **MILP**. The objective and constraints are linear; pack quantities `y
 - Optional unreachable MOQ is set to zero units; a forced inclusion with an unreachable cap or nonpositive margin raises `InfeasiblePlan`.
 - A forced-included allocation that exceeds budget/storage has no feasible MILP solution and raises `InfeasiblePlan`; no constraint is relaxed and no invalid fallback plan is returned.
 - Negative-margin optional products are disabled; zero-demand products have no available packs. Zero-cost profitable products remain bounded by demand and storage.
-- All monetary inputs, demand, risk scales, storage, MOQ, pack size, flags, and overrides are validated for finite/nonnegative or whole-number requirements as appropriate.
+- Monetary inputs, demand, risk scales, and overrides are checked for finiteness and nonnegativity; storage, MOQ, pack size, and flags are validated as whole-number/boolean inputs as appropriate. Fractional demand is valid; quantities and pack counts remain integral.
 - Demand caps bound every variable, so the objective is not unbounded. Tied optima may be selected by HiGHS; greedy ties use SKU order.
 
 ### Worked example: an optional MOQ
@@ -88,9 +91,27 @@ With one-unit packs and one-unit demand caps, let A cost ₹10/profit ₹60, B c
 
 The seeded 300-case property-style test enumerates every feasible quantity for small random instances with MOQs, pack sizes, storage limits, risk modes, overrides, and forced include/exclude choices, then asserts the SciPy MILP profit is optimal or correctly infeasible.
 
+### Fractional-demand correction and worked example
+
+The optimizer previously rejected a fractional `ProductOption.demand` before reaching its existing scale-and-floor calculation. This caused `/api/v1/plans/optimize` to return a 500 for ordinary moving-average forecasts and fractional overrides. `stockwise/optimizer.py::solve_plan` now validates demand with the finite-number check, selects an override when present, applies risk/numeric scaling, and floors the result to whole units before deriving full-pack caps. Regression coverage is in `tests/test_optimizer.py::test_fractional_demand_is_scaled_then_floored_for_each_risk_mode`, `test_fractional_forecast_override_is_scaled_then_floored`, `test_fractional_demand_hand_example_with_three_products`, and the fractional cases in `test_milp_matches_brute_force_for_300_random_constrained_cases`; API coverage verifies the 38.33 moving average and a 37.5 override.
+
+For a hand-solvable three-product case with Balanced risk (`r=1`), unit packs, no MOQ, no storage cap, and budget ₹10:
+
+| SKU | Unit cost | Unit profit | Fractional forecast | Whole-unit cap |
+|---|---:|---:|---:|---:|
+| A | ₹3 | ₹5 | 2.4 | 2 |
+| B | ₹4 | ₹7 | 1.8 | 1 |
+| C | ₹5 | ₹8 | 1.1 | 1 |
+
+The only cap-respecting combinations that spend at most ₹10 include `A=2,B=1,C=0` (spend ₹10, profit ₹17), `B=1,C=1` (₹9, ₹15), `A=1,C=1` (₹8, ₹13), and `A=2` (₹6, ₹10); therefore the exact optimum is `A=2,B=1,C=0`, with ₹10 spent and ₹17 expected profit. `tests/test_optimizer.py::test_fractional_demand_hand_example_with_three_products` asserts this exact solver result. Greedy orders B then A and happens to match here; the earlier A/B/C budget-₹12 example remains the case where greedy earns ₹60 while the exact solution earns ₹66.
+
 ## Stage 2: FastAPI, auth, and persistence endpoints
 
 **No LPP involved.** The API scopes seller data, converts saved history/products into the Stage 1.5 forecasting and MILP inputs, and persists each recommendation and its inputs.
+
+### Stage 2 bug fix: fractional forecasts
+
+**No new LPP is involved.** The API consumes a continuous statistical forecast or override as demand input; the optimizer converts it to a whole-unit demand bound after risk scaling. The objective, integer variables, pack/MOQ links, budget, and storage constraints are unchanged. `stockwise/api.py::optimize` passes the forecast value through to `stockwise/optimizer.py::solve_plan`; `tests/test_api.py::test_optimize_accepts_fractional_moving_average_forecast` and `test_optimize_accepts_fractional_forecast_override` verify both API paths. The generic 500 handler now logs a traceback server-side; error reporting does not alter the LPP.
 
 ## Stage 3: frontend (not built)
 

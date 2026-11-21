@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import uuid
+import asyncio
 from datetime import date
 from io import BytesIO
 
@@ -12,7 +13,8 @@ from sqlalchemy import select
 
 from alembic import command
 from alembic.config import Config
-from stockwise.api import SessionLocal, app
+import stockwise.api as stockwise_api
+from stockwise.api import SessionLocal, app, unexpected_error_handler
 from stockwise.models import Product, SalesWeek
 from stockwise.imports import MAX_FILE_BYTES
 
@@ -377,6 +379,65 @@ def test_optimize_saves_plan_with_totals_and_greedy_comparison(seller):
     assert reopened["inputs"]["risk_mode"] == "balanced"
     assert reopened["inputs"]["products"][0]["cost_price"] == "10.00"
     assert len(client.get(f"{BASE}/plans").json()) == 1
+
+
+def test_optimize_accepts_fractional_moving_average_forecast(seller):
+    client, headers, *_ = seller
+    product = _product(client, headers, sku="FRACTIONAL", name="Fractional", cost=1, profit=1)
+    assert product.status_code == 201, product.text
+    uploaded = _wide_upload(client, headers, rows=(
+        "sku,name,cost_price,profit_per_unit,2026-W44,2026-W45,2026-W46,2026-W47\n"
+        "FRACTIONAL,Fractional,1,1,40,35,42,38\n"))
+    assert uploaded.status_code == 201, uploaded.text
+
+    result = client.post(f"{BASE}/plans/optimize", headers=headers,
+                         json={"budget": 100, "risk_mode": "balanced",
+                               "forecast_method": "moving_average", "window": 3})
+    assert result.status_code == 201, result.text
+    item = result.json()["items"][0]
+    assert item["forecast"] == pytest.approx(38.3333333333)
+    assert item["quantity"] == 38
+
+
+def test_optimize_accepts_fractional_forecast_override(seller):
+    client, headers, *_ = seller
+    product = _product_with_history(client, headers, sku="OVERRIDE", name="Override",
+                                    cost=1, profit=1, forecast_override=37.5)
+    result = client.post(f"{BASE}/plans/optimize", headers=headers,
+                         json={"budget": 100, "risk_mode": "balanced",
+                               "forecast_method": "moving_average", "window": 3})
+    assert result.status_code == 201, result.text
+    item = next(row for row in result.json()["items"] if row["sku"] == product["sku"])
+    assert item["forecast"] == 37.5
+    assert item["quantity"] == 37
+
+
+def test_unexpected_server_error_is_logged_with_traceback_but_not_returned(monkeypatch):
+    from starlette.requests import Request
+    from unittest.mock import Mock
+    import traceback
+
+    request = Request({
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": "GET", "scheme": "http", "path": "/__test_unexpected_error",
+        "raw_path": b"/__test_unexpected_error", "query_string": b"", "headers": [],
+        "server": ("testserver", 80), "client": ("testclient", 50000),
+    })
+    logger_spy = Mock()
+    monkeypatch.setattr(stockwise_api, "logger", logger_spy)
+    try:
+        raise RuntimeError("private exception detail")
+    except RuntimeError as exc:
+        response = asyncio.run(unexpected_error_handler(request, exc))
+
+    assert response.status_code == 500
+    assert b"private exception detail" not in response.body
+    assert b"internal_error" in response.body
+    logger_spy.error.assert_called_once()
+    logged_trace = logger_spy.error.call_args.kwargs["exc_info"]
+    assert len(logged_trace) == 3 and logged_trace[0] is RuntimeError
+    assert "Traceback (most recent call last)" in "".join(traceback.format_exception(*logged_trace))
+    assert "private exception detail" in "".join(traceback.format_exception(*logged_trace))
 
 
 @pytest.mark.parametrize(("risk_mode", "forecast_cap"), [("safe", 5), ("balanced", 7), ("aggressive", 8)])
