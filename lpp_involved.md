@@ -113,9 +113,9 @@ The only cap-respecting combinations that spend at most ₹10 include `A=2,B=1,C
 
 **No new LPP is involved.** The API consumes a continuous statistical forecast or override as demand input; the optimizer converts it to a whole-unit demand bound after risk scaling. The objective, integer variables, pack/MOQ links, budget, and storage constraints are unchanged. `stockwise/api.py::optimize` passes the forecast value through to `stockwise/optimizer.py::solve_plan`; `tests/test_api.py::test_optimize_accepts_fractional_moving_average_forecast` and `test_optimize_accepts_fractional_forecast_override` verify both API paths. The generic 500 handler now logs a traceback server-side; error reporting does not alter the LPP.
 
-## Stage 3: frontend (not built)
+## Stage 3: frontend
 
-**No LPP involved.** The frontend will display product histories and call forecast/plan APIs; it does not construct a different optimization model.
+**No LPP involved.** The frontend consumes product histories and forecast results, sends budget/risk/optional constraints to the Stage 2 optimizer endpoint, and displays the saved MILP allocation in both the full table and purchase slip. It does not construct or solve a separate optimization model.
 
 ## Stage 4: packaging and seed data (not built)
 

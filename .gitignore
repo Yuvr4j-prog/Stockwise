@@ -5,3 +5,10 @@ __pycache__/
 *.py[cod]
 .coverage
 *.egg-info/
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/test-results/
+frontend/playwright-report/
+frontend/debug.log
+frontend/*.tsbuildinfo
