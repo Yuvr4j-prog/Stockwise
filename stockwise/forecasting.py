@@ -59,13 +59,26 @@ def _one_step_errors(values: list[float], method: str, window: int, alpha: float
     return errors
 
 
+def _adjust_stockouts(values: list[float], flags: Sequence[bool]) -> list[float]:
+    unflagged = [value for value, flagged in zip(values, flags) if not flagged]
+    if not unflagged:
+        return values.copy()
+    baseline = sum(unflagged) / len(unflagged)
+    return [max(value, baseline) if flagged else value for value, flagged in zip(values, flags)]
+
+
 def forecast(
     history: Sequence[float], method: Method = "auto", *, window: int = 3, alpha: float = 0.4,
     stockout_flags: Sequence[bool] | None = None,
 ) -> Forecast:
-    if stockout_flags is not None and len(stockout_flags) != len(history):
+    raw_history = list(history)
+    if stockout_flags is not None and len(stockout_flags) != len(raw_history):
         raise ValueError("stockout_flags must match the history length")
-    values = _valid(history)
+    raw_flags = list(stockout_flags) if stockout_flags is not None else [False] * len(raw_history)
+    if any(not isinstance(flag, bool) for flag in raw_flags):
+        raise ValueError("stockout_flags must contain booleans")
+    flags = [flag for value, flag in zip(raw_history, raw_flags) if value is not None]
+    values = _valid(raw_history)
     if not values:
         raise ValueError("at least one observed week is required")
     if window < 1:
@@ -74,16 +87,40 @@ def forecast(
         raise ValueError("alpha must be in (0, 1]")
     if method not in ("moving_average", "exponential_smoothing", "auto"):
         raise ValueError(f"unsupported method: {method}")
-    lower_bound = max((v for v, censored in zip(values, stockout_flags or [False] * len(values)) if censored), default=0.0)
+    adjusted = _adjust_stockouts(values, flags)
+    all_stockout = all(flags)
     if len(values) < 3:
-        return Forecast(max(values[-1], lower_bound), "last_week", "low", tuple(values))
+        demand = adjusted[-1]
+        if flags[-1]:
+            demand = max(demand, values[-1])
+        return Forecast(demand, "last_week", "low", tuple(values))
     if method == "moving_average":
-        return Forecast(max(moving_average(values, window), lower_bound), method, "medium", tuple(values))
+        demand = moving_average(adjusted, window)
+        if flags[-1]:
+            demand = max(demand, values[-1])
+        return Forecast(demand, method, "low" if all_stockout else "medium", tuple(values))
     if method == "exponential_smoothing":
-        return Forecast(max(exponential_smoothing(values, alpha), lower_bound), method, "medium", tuple(values))
-    scores = {name: sum(_one_step_errors(values, name, window, alpha)) / (len(values) - 1)
-              for name in ("moving_average", "exponential_smoothing")}
+        demand = exponential_smoothing(adjusted, alpha)
+        if flags[-1]:
+            demand = max(demand, values[-1])
+        return Forecast(demand, method, "low" if all_stockout else "medium", tuple(values))
+    methods = ("moving_average", "exponential_smoothing")
+    scores: dict[str, float] = {}
+    for name in methods:
+        errors = []
+        for i in range(1, len(values)):
+            train = _adjust_stockouts(values[:i], flags[:i])
+            prediction = moving_average(train, window) if name == "moving_average" else exponential_smoothing(train, alpha)
+            target = values[i]
+            prior_unflagged = [values[j] for j in range(i) if not flags[j]]
+            if flags[i] and prior_unflagged:
+                target = max(target, sum(prior_unflagged) / len(prior_unflagged))
+            errors.append(abs(target - prediction))
+        scores[name] = sum(errors) / (len(values) - 1)
     # Stable ordering makes exact ties deterministic.
     chosen = min(scores, key=lambda name: (scores[name], name))
-    value = moving_average(values, window) if chosen == "moving_average" else exponential_smoothing(values, alpha)
-    return Forecast(max(value, lower_bound), chosen, "high" if len(values) >= 6 else "medium", tuple(values), scores[chosen])
+    value = moving_average(adjusted, window) if chosen == "moving_average" else exponential_smoothing(adjusted, alpha)
+    if flags[-1]:
+        value = max(value, values[-1])
+    confidence = "low" if all_stockout else ("high" if len(values) >= 6 else "medium")
+    return Forecast(value, chosen, confidence, tuple(values), scores[chosen])

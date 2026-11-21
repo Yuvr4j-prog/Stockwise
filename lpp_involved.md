@@ -1,67 +1,97 @@
 # Linear programming notes by stage
 
-## Stage 1: data model and migration
+## Stage 1: data model, migration, forecasting, and imports
 
-No LPP involved. This stage stores product costs, margins, sales history and future plan inputs that the optimizer consumes.
+Data model/migration: **No LPP involved.** This stage stores product costs/margins and sales history consumed by forecasting and optimization.
 
-## Stage 1: forecasting
+Forecasting: **No LPP involved.** The forecast produces the demand cap consumed by the optimizer.
 
-No LPP involved. Forecasts produce product demand caps consumed by the optimizer; stockout observations are lower bounds used to keep the forecast from falling below observed censored sales.
+CSV/XLSX imports: **No LPP involved.** The parser produces product costs/margins and dated weekly observations consumed by forecasting and optimization.
 
-## Stage 1: CSV/XLSX import
+The original Stage 1 formulation treated every nonzero minimum quantity as mandatory. Stage 1.5 below supersedes that behavior with an optional MOQ activation variable.
 
-No LPP involved. Import validation produces historical sales and product cost/margin inputs consumed by forecasting and the optimizer.
+## Stage 1.5: forecasting and import corrections
 
-## Stage 1: optimizer
+Forecasting/import validation: **No LPP involved.** Stockout-adjusted forecasts and validated sales rows produce inputs for the MILP.
 
-Let `i` index products. Let `x_i` be the number of whole units ordered, `c_i` the unit cost, `p_i` the unit profit, `d_i` the forecast demand, `m_i` the required minimum, and `b` the budget.
+## Stage 1.5: optimizer with optional MOQ
+
+For each product `i`, let:
+
+- `y_i` = integer number of packs ordered;
+- `z_i ∈ {0,1}` = whether an MOQ/forced product is activated;
+- `s_i` = units per pack, `c_i` = unit cost, `p_i` = unit profit;
+- `d_i` = forecast after override and risk scaling, `u_i = floor(d_i / s_i)` = pack cap;
+- `m_i = ceil(MOQ_i / s_i)` = minimum packs that satisfy MOQ;
+- `B` = budget and `S` = optional storage capacity in units.
+
+For an MOQ product or a forced inclusion, the formulation is:
 
 \[
-\max \sum_i p_i x_i
+\max \sum_i p_i s_i y_i
 \]
 subject to
 \[
-\sum_i c_i x_i \le b,\qquad m_i \le x_i \le d_i,\qquad x_i\in\mathbb Z_{\ge0}.
+\sum_i c_i s_i y_i \le B, \qquad
+\sum_i s_i y_i \le S \quad (\text{when storage is set}),
+\]
+\[
+m_i z_i \le y_i \le u_i z_i, \qquad
+y_i \in \mathbb{Z}_{\ge 0},\quad z_i \in \{0,1\}.
 \]
 
-In plain language: choose whole-unit buy quantities to maximize expected profit, without spending over budget or ordering below mandatory minimums or above expected demand.
+When there is no MOQ and no forced inclusion, `z_i` is unnecessary and `0 ≤ y_i ≤ u_i`. When `MOQ_i=0` but the seller forces inclusion, use `m_i=1`. Force exclusion sets the cap to zero. If an optional product's cap is below its MOQ, it is unavailable (`y_i=0`); if it is forced included, the plan is infeasible and the API reports that condition. The minimum is rounded upward to complete packs.
 
-### Mapping to code
+Plain language: maximize expected unit profit while respecting money, storage, whole packs, and forecast demand. An MOQ product is either not ordered or bought in enough complete packs to meet its supplier minimum. A forced inclusion fixes its activation to one.
 
-- `stockwise/optimizer.py::solve_plan` validates inputs, constructs risk-adjusted/overridden demand caps and converts bounds into pack-count variables.
-- Objective coefficients are `-p_i * pack_size_i` in the SciPy minimization call; this maximizes the corresponding profit.
-- Budget row in the sparse `LinearConstraint` is `c_i * pack_size_i`, upper bound `budget`.
-- `Bounds` contains integer pack-count lower bounds and floored demand upper bounds. `integrality=np.ones(n)` marks every variable integer.
-- Optional storage adds `sum(pack_size_i * y_i) <= storage_limit`. `y_i` is pack count, so `x_i=pack_size_i*y_i`.
-- A forced include raises its lower bound to at least one pack (or the explicit minimum); forced exclude sets its upper bound to zero. Conflicts and infeasible demand/budget/storage are returned as `InfeasiblePlan`.
-- `demand_scale` is the risk multiplier: Safe `0.80`, Balanced `1.00`, Aggressive `1.15`; an explicit forecast override replaces the product forecast before scaling. The module accepts these numeric scales, while a later API maps the named modes.
-- Products with optional nonpositive margin have upper bound zero. A required minimum for a nonpositive-margin item is declared infeasible. Zero-cost positive-margin products remain bounded by demand and storage.
+This is a **MILP**. The objective and constraints are linear; pack quantities `y_i` are integers and activation variables `z_i` are binary. The binary is essential because it models the disjunction “zero or at least MOQ.” Relaxing integrality could produce fractional packs or a fractional activation that buys below MOQ.
 
-This is an **ILP** (also within the broad MILP class, with no continuous decision variables): the objective and constraints are linear, while order quantities must be whole units/whole packs. Integrality matters because the seller cannot buy fractional units; relaxing integrality could report a cheaper partial item and the wrong recommendation.
+### Risk and forecast inputs
 
-### Edge cases
+- `stockwise/forecasting.py::forecast` first adjusts each flagged observation to `max(observed_sales, mean(unflagged_sales))`, then runs the selected method. If every observation is flagged it uses the recorded values and marks confidence low. A most-recent flagged sale remains a final one-week lower bound. No historical flagged maximum is carried forward as a permanent floor.
+- `stockwise/api.py::_product_forecast` applies a seller's forecast override when set; otherwise it uses the statistical forecast.
+- `stockwise/optimizer.py::solve_plan` applies `d_i = forecast_i × demand_scale × risk_multiplier`, then floors the cap to whole units and to full packs. Named multipliers are Safe `0.80`, Balanced `1.00`, Aggressive `1.15`; numeric `demand_scale` multiplies the named factor.
 
-- Negative/NaN/infinite budgets, negative quantities, invalid pack sizes and duplicate SKUs fail input validation.
-- Inconsistent bounds or mandatory items exceeding budget/storage produce a readable infeasibility error. Bounds are never silently relaxed.
-- No products returns a zero plan. Budget too small yields zero optional units and the full amount unspent. Zero demand has a zero cap. Negative-margin optional products are omitted.
-- Multiple optima can exist; SciPy/HiGHS selects an optimum. Greedy ties are broken by SKU. No unbounded objective is possible because each product has a finite demand cap.
+### Mapping constraints to code
 
-### Worked example
+- `stockwise/optimizer.py::solve_plan` builds integer pack variables, optional binary activation variables, upper/lower linking rows, objective coefficients, and the SciPy `LinearConstraint`.
+- The budget row coefficient is `cost_i × pack_size_i`; its upper bound is `budget`.
+- Optional storage row coefficients are `pack_size_i`; its upper bound is `storage_limit`.
+- MOQ and forced-inclusion links are `y_i - cap_packs_i*z_i ≤ 0` and `y_i - min_packs_i*z_i ≥ 0`. Forced inclusion sets the binary lower/upper bound to one. Forced exclusion sets the pack cap to zero.
+- `bounds_lo`/`bounds_hi` were replaced with zero lower pack counts plus linking rows; this allows optional MOQ products to remain at zero.
+- The post-solve outputs and greedy comparison are reconstructed in whole units from pack counts.
 
-Three one-pack products have one-unit demand caps and no minimums or storage cap:
+### Edge cases and solver behavior
 
-| SKU | Cost | Profit | Demand cap | Profit per rupee |
-|---|---:|---:|---:|---:|
-| A | ₹10 | ₹60 | 1 | 6.00 |
-| B | ₹6 | ₹33 | 1 | 5.50 |
-| C | ₹6 | ₹33 | 1 | 5.50 |
+- Optional unreachable MOQ is set to zero units; a forced inclusion with an unreachable cap or nonpositive margin raises `InfeasiblePlan`.
+- A forced-included allocation that exceeds budget/storage has no feasible MILP solution and raises `InfeasiblePlan`; no constraint is relaxed and no invalid fallback plan is returned.
+- Negative-margin optional products are disabled; zero-demand products have no available packs. Zero-cost profitable products remain bounded by demand and storage.
+- All monetary inputs, demand, risk scales, storage, MOQ, pack size, flags, and overrides are validated for finite/nonnegative or whole-number requirements as appropriate.
+- Demand caps bound every variable, so the objective is not unbounded. Tied optima may be selected by HiGHS; greedy ties use SKU order.
 
-Budget is ₹12. The feasible useful choices are none (₹0), A (₹10, profit ₹60), B (₹6, profit ₹33), C (₹6, profit ₹33), and B+C (₹12, profit ₹66). Thus the exact result is `A=0, B=1, C=1`, spend ₹12, profit ₹66, ROI 5.5. Greedy ranks A first by profit per rupee and buys it, leaving ₹2, so its profit is ₹60. It is suboptimal by ₹6. The test suite asserts this solver result when executable.
+### Worked example: an optional MOQ
 
-### Greedy comparison
+Budget `B=₹12`, storage `S=4` units:
 
-Greedy sorts by `profit/cost` descending (zero-cost positive-margin items rank first), then SKU; it purchases each ranked product to its cap while budget/storage permits. It is fast and understandable but ignores combinations and indivisible costs, as the example shows. SciPy MILP finds the best feasible integer combination.
+| SKU | Unit cost | Unit profit | Pack size | MOQ | Forecast | Possible positive orders |
+|---|---:|---:|---:|---:|---:|---|
+| A | ₹3 | ₹4 | 2 | 3 | 6 | 0, 4, or 6 units |
+| B | ₹4 | ₹5 | 1 | 0 | 2 | 0, 1, or 2 units |
 
-## Later stages (not built)
+For A, `m_A=ceil(3/2)=2` packs. Buying 4 units costs ₹12 and earns ₹16; 6 units exceed budget and storage. Buying B's full cap costs ₹8 and earns ₹10. With A's 4 units, storage is full, so no B can be added. The exact solver chooses `A=4, B=0`, spends ₹12, and earns ₹16. The greedy ratio order is A (`4/3`) before B (`5/4`) and also selects A=4, matching the solver. The domain test `test_moq_is_optional_and_non_multiple_minimum_rounds_to_full_packs` verifies the pack-rounded minimum; the API suite verifies an affordable budget that still skips the optional MOQ.
 
-FastAPI/auth and UI consume the same forecast/optimization inputs and outputs but add no distinct LPP. The Docker/seed/docs stage likewise adds no new formulation. These stages have not been started.
+### Greedy comparison and a suboptimal case
+
+The greedy baseline sorts by unit profit/cost (zero-cost items first, then SKU) and adds each product while its MOQ threshold, budget, and storage allow. It is a quick comparison, not a substitute for the MILP.
+
+With one-unit packs and one-unit demand caps, let A cost ₹10/profit ₹60, B cost ₹6/profit ₹33, C cost ₹6/profit ₹33, and budget ₹12. Greedy takes A first (ratio 6 versus 5.5), then cannot afford B/C, earning ₹60. The exact solver takes B+C and earns ₹66. `tests/test_optimizer.py::test_milp_matches_hand_solved_example_and_greedy_is_suboptimal` checks that output.
+
+The seeded 300-case property-style test enumerates every feasible quantity for small random instances with MOQs, pack sizes, storage limits, risk modes, overrides, and forced include/exclude choices, then asserts the SciPy MILP profit is optimal or correctly infeasible.
+
+## Stage 3: frontend (not built)
+
+**No LPP involved.** The frontend will display product histories and call forecast/plan APIs; it does not construct a different optimization model.
+
+## Stage 4: packaging and seed data (not built)
+
+**No LPP involved.** Compose and demo data will provide the PostgreSQL environment and sample inputs for the same optimizer.

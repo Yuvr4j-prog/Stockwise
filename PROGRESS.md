@@ -1,32 +1,24 @@
 # StockWise progress
 
-## Stage 1 — Data, forecasting, optimizer, imports
+## Completed
 
-**Status:** Stage 1 implemented, verified, and committed.
+- Stage 1 committed as `3e7e3ce`: initial PostgreSQL model/migration, forecasts, optimizer and upload parser.
+- Stage 1.5 changes implemented and verified: optional MOQ MILP binaries; adjusted stockout handling; structured all-row parser errors and warnings; named risk modes; 300-case brute-force optimizer comparison.
+- Stage 1.5 verification: `60 passed in 3.01s` across forecasting, optimizer, and imports tests.
 
-### Done
+## Current
 
-- Initialized Git repository.
-- Added SQLAlchemy 2.0 PostgreSQL models and initial Alembic migration.
-- Added pure moving-average, exponential-smoothing and auto-backtest forecast module, with missing/zero and stockout handling.
-- Added SciPy MILP optimizer and greedy comparison, including pack, min, storage, forced include/exclude, risk scale and override support.
-- Added strict CSV/XLSX parsing for wide and long formats with row-level validation and upload limits.
-- Added `pyproject.toml`, `decision.md`, and `lpp_involved.md`, including the worked optimizer example.
-- Installed the declared dependencies in a workspace-local `.venv` and ignored that environment in Git.
-- Final verification: `23 passed`; Alembic offline SQL generation passed; `git diff --check` passed.
+- Stage 2 API is being implemented under `/api/v1`; the first real-Postgres integration run found two test/summary issues. Those findings are being fixed before final verification.
+- A disposable PostgreSQL 17 cluster lives in ignored `.pgdata/`; run it in the same PowerShell process as tests so the sandbox keeps the local listener available.
+- Alembic revision `0002_api` has been applied to the disposable database, and `alembic check` reported no pending model differences.
 
-### Next
+## Next
 
-- Add pytest coverage for forecasting, MILP versus brute force, upload parsing, and model/migration structure.
-- Commit Stage 1.
-- Wait for approval before beginning Stage 2.
+- Finish the Stage 1.5 documentation/commit.
+- Fix the two integration test failures, run the full test suite against PostgreSQL, and verify migration consistency again.
+- Commit Stage 2. Stop before frontend, Docker Compose, seed script, and README; wait for approval.
 
-### Open environment issue
+## Environment notes
 
-- PowerShell `python`/`python3` aliases are inaccessible; use `\.venv\Scripts\python.exe` after activating/installing the workspace environment.
-- PostgreSQL was not started, so no live database migration was applied. Alembic offline SQL generation was checked successfully.
-- No app, API, auth, frontend, Docker Compose, seed script, or README has been added.
-
-### Open questions
-
-- None blocking; upload duplicate-week replacement behavior remains a Stage 2/API decision.
+- Use Python 3.12 in `.venv`; system `python` aliases are inaccessible.
+- PostgreSQL integration tests are skipped with a reason when `DATABASE_URL` is unset. In this workspace, Postgres must be started in the same PowerShell process as `pytest`.
