@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, apiBaseUrl, ApiError } from "@/lib/api";
-import { money, quantity, shortDate } from "@/lib/format";
+import { decimal, money, quantity, shortDate } from "@/lib/format";
 import { copy } from "@/lib/strings";
 import type { Plan } from "@/lib/types";
 import { Icon } from "@/components/Icons";
@@ -74,14 +74,14 @@ export default function PlanResults() {
             <p className="mobile-table-note">{copy.common.scrollTable}</p>
             <div className="table-scroll">
               <table className="data-table results-table" aria-label={copy.results.orderTable}>
-                <thead><tr><th>{copy.results.sku}</th><th>{copy.results.product}</th><th className="numeric">{copy.results.forecast}</th><th className="numeric">{copy.results.quantity}</th><th className="numeric">{copy.results.spend}</th><th className="numeric">{copy.results.profit}</th><th>{copy.results.reason}</th></tr></thead>
+                <thead><tr><th className="result-mobile-hide">{copy.results.sku}</th><th>{copy.results.product}</th><th className="result-mobile-hide numeric">{copy.results.forecast}</th><th className="numeric">{copy.results.quantity}</th><th className="result-mobile-hide numeric">{copy.results.spend}</th><th className="result-mobile-hide numeric">{copy.results.profit}</th><th className="result-mobile-hide">{copy.results.reason}</th></tr></thead>
                 <tbody>{plan.items.map((item) => {
                   const productName = plan.forecasts.find((row) => row.sku === item.sku)?.name ?? item.sku;
                   return <tr key={item.sku}>
-                    <td className="sku-cell">{item.sku}</td><td className="product-name">{productName}</td>
-                    <td className="numeric mono-value">{new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(item.forecast)}</td>
-                    <td className="numeric mono-value">{quantity(item.quantity)}</td><td className="numeric">{money(item.spend)}</td><td className="numeric profit-positive">{money(item.expected_profit)}</td>
-                    <td><span className="reason-text">{item.reason}</span></td>
+                    <td className="result-mobile-hide sku-cell">{item.sku}</td><td className="product-name">{productName}</td>
+                    <td className="result-mobile-hide numeric mono-value">{decimal(item.forecast)}</td>
+                    <td className="numeric mono-value buy-units-cell">{quantity(item.quantity)}</td><td className="result-mobile-hide numeric">{money(item.spend)}</td><td className="result-mobile-hide numeric profit-positive">{money(item.expected_profit)}</td>
+                    <td className="result-mobile-hide"><span className="reason-text">{item.reason}</span></td>
                   </tr>;
                 })}</tbody>
               </table>

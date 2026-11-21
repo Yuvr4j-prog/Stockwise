@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, subscribeBackendWake } from "@/lib/api";
 import { copy } from "@/lib/strings";
 import type { Seller } from "@/lib/types";
 import { currentIsoWeek } from "@/lib/format";
@@ -21,6 +21,8 @@ export default function WorkspaceFrame({ children }: { children: React.ReactNode
   const [seller, setSeller] = useState<Seller | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
+  const [waking, setWaking] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const week = currentIsoWeek();
 
   useEffect(() => {
@@ -30,11 +32,13 @@ export default function WorkspaceFrame({ children }: { children: React.ReactNode
       .catch((error: unknown) => {
         if (!active) return;
         if (error instanceof ApiError && error.status === 401) router.replace("/login");
-        else setSeller(null);
+        else { setSeller(null); setLoadError(error instanceof ApiError ? error.message : copy.auth.wakeFailed); }
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [router]);
+
+  useEffect(() => subscribeBackendWake(setWaking), []);
 
   async function signOut() {
     setSigningOut(true);
@@ -47,7 +51,9 @@ export default function WorkspaceFrame({ children }: { children: React.ReactNode
   }
 
   if (loading || !seller) {
-    return <main className="loading-state" aria-live="polite">{loading ? copy.common.loading : copy.auth.loginTitle}</main>;
+    return <main className="loading-state" aria-live="polite">
+      {waking ? copy.common.wakingUp : loading ? copy.common.loading : loadError ? <><p className="error-message" role="alert">{loadError}</p><button className="button button-secondary" type="button" onClick={() => window.location.reload()}>{copy.common.retry}</button></> : copy.auth.loginTitle}
+    </main>;
   }
 
   return (
@@ -95,6 +101,7 @@ export default function WorkspaceFrame({ children }: { children: React.ReactNode
           <div className="market-strip-left"><span className="market-dot" />{copy.shell.currentWeek}<span className="market-week">{week.year} · W{String(week.week).padStart(2, "0")}</span></div>
           <span className="market-currency">{copy.common.currencyNote}</span>
         </div>
+        {waking ? <p className="backend-wake workspace-wake" role="status">{copy.common.wakingUp}</p> : null}
         <main id="main-content">{children}</main>
       </div>
     </div>

@@ -112,7 +112,7 @@ export default function PlanBuilder() {
               <div className="field"><label htmlFor="storage-limit">{copy.planner.storage}</label><input className="input input-number" id="storage-limit" type="number" min="0" step="1" placeholder={copy.products.integerPlaceholder} value={storageLimit} onChange={(event) => setStorageLimit(event.target.value)} /></div>
             </div>
             <div className="panel-head"><h2 className="panel-title">{copy.planner.availability}</h2><span className="field-hint">{copy.planner.selectProducts}</span></div>
-            <p className="mobile-table-note">{copy.common.scrollTable}</p>
+            <p className="mobile-table-note constraint-table-note">{copy.common.scrollTable}</p>
             <div className="table-scroll">
               <table className="data-table constraint-table" aria-label={copy.planner.availability}>
                 <thead><tr><th>{copy.planner.product}</th><th className="numeric">{copy.planner.expectedDemand}</th><th className="numeric">{copy.planner.margin}</th><th>{copy.planner.orderRule}</th></tr></thead>
@@ -120,10 +120,10 @@ export default function PlanBuilder() {
                   const fc = forecastByProduct.get(product.id);
                   const choice = choices[product.id] ?? "automatic";
                   return <tr key={product.id}>
-                    <td><strong>{product.name}</strong><div className="sku-cell">{product.sku}</div></td>
-                    <td className="numeric mono-value">{fc ? decimal(fc.forecast) : "—"}</td>
-                    <td className="numeric">{money(product.profit_per_unit)}</td>
-                    <td><select className="select input-compact" aria-label={`${copy.planner.orderRule} ${product.sku}`} value={choice} onChange={(event) => setChoices({ ...choices, [product.id]: event.target.value as ProductChoice })}>
+                    <td data-label={copy.planner.product}><strong>{product.name}</strong><div className="sku-cell">{product.sku}</div></td>
+                    <td className="numeric mono-value" data-label={copy.planner.expectedDemand}>{fc ? decimal(fc.forecast) : "—"}</td>
+                    <td className="numeric" data-label={copy.planner.margin}>{money(product.profit_per_unit)}</td>
+                    <td data-label={copy.planner.orderRule}><select className="select input-compact" aria-label={`${copy.planner.orderRule} ${product.sku}`} value={choice} onChange={(event) => setChoices({ ...choices, [product.id]: event.target.value as ProductChoice })}>
                       <option value="automatic">{copy.planner.automatic}</option><option value="include">{copy.planner.include}</option><option value="exclude">{copy.planner.exclude}</option>
                     </select><span className="field-hint" style={{ display: "block", marginTop: 3 }}>{copy.products.minimum}: {quantity(product.min_order_qty)} · {copy.products.pack}: {quantity(product.pack_size)}</span></td>
                   </tr>;
@@ -132,8 +132,8 @@ export default function PlanBuilder() {
             </div>
           </section>
         </form>
-        <aside className="plan-rail" aria-label={copy.planner.title}>
-          <h2>{copy.planner.title}</h2>
+        <aside className="plan-rail" aria-label={copy.planner.summaryTitle}>
+          <h2>{copy.planner.summaryTitle}</h2>
           <p>{copy.planner.description}</p>
           <button className="button" type="submit" form="plan-builder-form" disabled={submitting || !budget}>{submitting ? copy.planner.solving : copy.planner.solve}</button>
           <ul className="plan-rail-list">

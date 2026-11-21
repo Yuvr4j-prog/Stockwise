@@ -116,7 +116,7 @@ export default function ProductLedger() {
 
       <section className="paper-panel product-ledger-panel" aria-labelledby="product-table-heading">
         <div className="panel-head">
-          <div><h2 className="panel-title" id="product-table-heading">{copy.products.title}</h2><span className="field-hint">{copy.products.productCount}: {products.length}</span></div>
+          <div><h2 className="panel-title" id="product-table-heading">{copy.products.tableTitle}</h2><span className="field-hint">{copy.products.productCount}: {products.length}</span></div>
           <div className="field" style={{ width: "min(240px, 48vw)" }}>
             <label className="visually-hidden" htmlFor="product-filter">{copy.products.searchLabel}</label>
             <input id="product-filter" className="input input-compact" type="search" placeholder={copy.common.search} value={filter} onChange={(event) => setFilter(event.target.value)} />

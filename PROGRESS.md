@@ -17,8 +17,41 @@
 
 ## Current
 
-- Stages 1, 1.5, 2, and 3 are complete. The fractional-demand correction and Market ledger frontend are verified.
-- Stage 4 has not started. Docker Compose, the seed script, and README remain unbuilt as requested.
+- Stages 1, 1.5, 2, and 3 are complete and committed. Stage 4 implementation is present: small UI fixes, cold-start handling, health checks, login/signup throttling, production secret validation, configurable upload limits, Compose packaging, an explicit idempotent demo seed command, a remote smoke script, and the requested README/DEPLOY notes.
+- The Stage 4 source and documentation are ready for review. Real PostgreSQL/Compose and full changed-screen screenshot verification remain unverified in this workspace; do not treat Stage 4 as fully runtime-verified.
+
+## Stage 4 verification (2026-11-22)
+
+- Backend suite without a `DATABASE_URL`: `78 passed, 77 skipped, 1 warning in 7.65s`. The skips are the PostgreSQL API integration tests; this is not a real-PostgreSQL run.
+- Frontend `npm run typecheck`: passed.
+- Frontend `npm run build`: passed earlier in this run before the optional Playwright executable-path setting was added; application source did not change after that build.
+- Cold-start Playwright regression: `1 passed (7.0s)` earlier in this run. It exercises the retry message with health responses stubbed; it does not verify a live Render/Neon wake-up.
+- Auth screenshots: `login-desktop.png`, `login-phone.png`, `signup-desktop.png`, and `signup-phone.png` were captured and visually reviewed. The auth layout reads cleanly in the ledger palette and fits the phone canvas. The other 12 product/detail/builder/result/saved-plan/settings screenshots are the previous Stage 3 captures and do not reflect all Stage 4 changes; no fresh captures of those screens are claimed.
+- Latest screenshot retake attempt with system Chrome failed with `net::ERR_CONNECTION_TIMED_OUT` for the local Next server. The Playwright browser process cannot reach the local listener in this workspace. The optional `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` setting only addresses the missing bundled browser, not this network isolation.
+- `docker compose up --build -d` could not start: PowerShell reported that `docker` is not recognized. PostgreSQL 17.6 is installed, but its local cluster cannot bind to IPv4/IPv6 localhost (`Permission denied`); migrations, `alembic check`, the full database suite, Compose Playwright run, and local smoke script therefore could not run.
+- No Vercel, Render, or Neon account was used. Deployment instructions are marked **untested against the real platform** in [DEPLOY.md](DEPLOY.md).
+
+## Stage 4 commands to verify when Docker is available
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build -d
+$env:DATABASE_URL = "postgresql+psycopg://stockwise:local-only-change-me@127.0.0.1:5432/stockwise"
+python -m alembic upgrade head
+python -m alembic check
+python -m pytest -o addopts=-q -rs
+Set-Location frontend
+npm ci
+npm run typecheck
+npm run build
+$env:PLAYWRIGHT_BASE_URL = "http://127.0.0.1:8080"
+$env:PLAYWRIGHT_API_URL = "http://127.0.0.1:8080"
+npm run test:e2e
+Set-Location ..
+python scripts/smoke_remote.py http://127.0.0.1:8080
+```
+
+The smoke script creates a unique test seller and product and leaves them in the selected database. Use a disposable local database.
 
 ## Stage 3 visual direction choices
 

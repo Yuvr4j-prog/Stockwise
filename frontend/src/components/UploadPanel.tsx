@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { api, ApiError, apiBaseUrl, uploadBody } from "@/lib/api";
 import { copy } from "@/lib/strings";
 import { Icon } from "@/components/Icons";
@@ -20,6 +20,21 @@ export default function UploadPanel({ onCommitted }: { onCommitted: () => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [committed, setCommitted] = useState(false);
+  const [maxUploadBytes, setMaxUploadBytes] = useState<number | null>(null);
+  const [uploadLimitChecked, setUploadLimitChecked] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api<{ max_upload_bytes: number }>("/health")
+      .then((health) => { if (active) setMaxUploadBytes(health.max_upload_bytes); })
+      .catch(() => undefined)
+      .finally(() => { if (active) setUploadLimitChecked(true); });
+    return () => { active = false; };
+  }, []);
+
+  const uploadFormat = maxUploadBytes === null
+    ? uploadLimitChecked ? copy.products.uploadLimitUnavailable : copy.products.uploadLimitLoading
+    : copy.products.uploadLimit(maxUploadBytes / (1024 * 1024));
 
   function selectFile(next: File | null) {
     setFile(next);
@@ -102,7 +117,7 @@ export default function UploadPanel({ onCommitted }: { onCommitted: () => void }
         </div>
       </div>
       <div className="upload-actions" style={{ borderTop: 0, paddingBottom: 0 }}>
-        <span className="field-hint">{copy.products.uploadFormat}</span>
+        <span className="field-hint">{uploadFormat}</span>
         {file ? <span className="mono-value" style={{ fontSize: 11 }}>{file.name}</span> : null}
       </div>
       <label
@@ -114,7 +129,7 @@ export default function UploadPanel({ onCommitted }: { onCommitted: () => void }
       >
         <input ref={inputRef} id="sales-file" name="sales-file" type="file" accept=".csv,.xlsx" onChange={onFileChange} aria-label={copy.products.dropFile} />
         <strong>{copy.products.dropFile}</strong>
-        <span>{file ? file.name : copy.products.uploadFormat}</span>
+        <span>{file ? file.name : uploadFormat}</span>
       </label>
       <div className="upload-actions">
         <span className="field-hint">{file ? copy.products.previewOnly : ""}</span>

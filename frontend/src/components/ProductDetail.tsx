@@ -139,7 +139,7 @@ export default function ProductDetail() {
       <section className="detail-summary" aria-label={copy.product.eyebrow}>
         <div><span className="small-label">{copy.product.cost}</span><strong>{money(product.cost_price)}</strong></div>
         <div><span className="small-label">{copy.product.profit}</span><strong className="profit-positive">{money(product.profit_per_unit)}</strong></div>
-        <div><span className="small-label">{copy.product.forecast}</span><strong>{quantity(forecast?.forecast ?? 0)} {copy.common.units}</strong></div>
+        <div><span className="small-label">{copy.product.forecast}</span><strong>{decimal(forecast?.forecast ?? 0)} {copy.common.units}</strong></div>
       </section>
 
       <section className="paper-panel" aria-labelledby="forecast-settings-heading">

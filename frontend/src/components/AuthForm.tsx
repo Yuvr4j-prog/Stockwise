@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
-import { api, ApiError } from "@/lib/api";
+import { FormEvent, useEffect, useState } from "react";
+import { api, ApiError, subscribeBackendWake, wakeBackend } from "@/lib/api";
 import { copy } from "@/lib/strings";
 
 export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -12,7 +12,17 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [waking, setWaking] = useState(false);
   const signup = mode === "signup";
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeBackendWake((value) => { if (active) setWaking(value); });
+    void wakeBackend().catch((problem: unknown) => {
+      if (active) setError(problem instanceof ApiError ? problem.message : copy.auth.wakeFailed);
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,7 +57,6 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <p className="eyebrow">{copy.brand.descriptor}</p>
           <h1>{copy.auth.boardTitle}</h1>
           <p>{copy.auth.boardNote}</p>
-          <div className="ledger-lines" aria-hidden="true"><span /><span /><span /></div>
         </div>
         <div className="auth-board-foot">{copy.shell.section} · {copy.common.week}</div>
       </section>
@@ -67,6 +76,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
               {signup ? <span className="field-hint" id="password-hint">{copy.auth.minPassword}</span> : null}
             </div>
             {error ? <p className="error-message" role="alert">{error}</p> : null}
+            {waking ? <p className="backend-wake" role="status">{copy.auth.wakingUp}</p> : null}
             <button className="button" type="submit" disabled={submitting}>{submitting ? copy.common.saving : signup ? copy.auth.signup : copy.auth.login}</button>
           </div>
           <div className="auth-switch">

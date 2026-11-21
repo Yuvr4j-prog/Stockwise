@@ -117,6 +117,8 @@ The only cap-respecting combinations that spend at most ₹10 include `A=2,B=1,C
 
 **No LPP involved.** The frontend consumes product histories and forecast results, sends budget/risk/optional constraints to the Stage 2 optimizer endpoint, and displays the saved MILP allocation in both the full table and purchase slip. It does not construct or solve a separate optimization model.
 
-## Stage 4: packaging and seed data (not built)
+## Stage 4: packaging, deployment readiness, and seed data
 
-**No LPP involved.** Compose and demo data will provide the PostgreSQL environment and sample inputs for the same optimizer.
+**No LPP involved.** Packaging, health checks, rate limits, and the seed command do not formulate or solve an allocation; the seeded weekly sales and product fields are ordinary seller inputs that the existing Stage 1.5 forecast and MILP can consume. The app's saved plans remain outputs of the unchanged Stage 1.5 formulation.
+
+No objective, decision variable, or optimization constraint was added or changed in this stage. For the existing integer formulation, the fractional-demand three-product example above still yields `A=2, B=1, C=0`, spend ₹10, profit ₹17; the hand-solved greedy-suboptimal example above yields ₹60 greedy versus ₹66 MILP. Stage 4's seed data supplies inputs to the existing LPP. LPP-related unit tests passed in the available test run; PostgreSQL migrations and the API-to-solver path were not re-run because PostgreSQL could not bind to localhost and Docker was unavailable.

@@ -1,6 +1,6 @@
 import { expect, request, type APIRequestContext, type Page } from "@playwright/test";
 
-const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const apiOrigin = process.env.PLAYWRIGHT_API_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const weeks = ["2026-W44", "2026-W45", "2026-W46", "2026-W47"];
 
 export const shopRows = [

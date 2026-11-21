@@ -20,7 +20,7 @@ export function quantity(value: number | string | null | undefined): string {
 
 export function decimal(value: number | string | null | undefined): string {
   const number = Number(value ?? 0);
-  return new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return new Intl.NumberFormat("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 1 })
     .format(Number.isFinite(number) ? number : 0);
 }
 

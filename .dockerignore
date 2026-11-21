@@ -1,0 +1,15 @@
+.git
+.venv
+.pgdata
+.pytest_cache
+.vscode
+__pycache__
+*.py[cod]
+*.egg-info
+.env
+.env.*
+!.env.example
+frontend/node_modules
+frontend/.next
+frontend/test-results
+frontend/playwright-report

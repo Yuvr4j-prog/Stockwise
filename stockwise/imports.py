@@ -11,8 +11,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Mapping
 
 from openpyxl import load_workbook
+from stockwise.config import format_upload_limit, load_max_upload_bytes
 
-MAX_FILE_BYTES = 10 * 1024 * 1024
+MAX_FILE_BYTES = load_max_upload_bytes()
 MAX_ROWS = 10_000
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
 BASE = {"sku", "name", "cost_price", "profit_per_unit"}
@@ -63,7 +64,7 @@ def _week(label: str) -> date:
 
 def _rows(data: bytes, filename: str) -> tuple[list[str], list[list[object]]]:
     if len(data) > MAX_FILE_BYTES:
-        raise UploadValidationError([_issue(0, "file", len(data), "file exceeds 10 MiB")])
+        raise UploadValidationError([_issue(0, "file", len(data), f"file exceeds {format_upload_limit(MAX_FILE_BYTES)}")])
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     try:
         if suffix == "csv":

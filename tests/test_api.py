@@ -4,12 +4,14 @@ from __future__ import annotations
 import os
 import uuid
 import asyncio
+from dataclasses import replace
 from datetime import date
 from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from starlette.requests import Request
 
 from alembic import command
 from alembic.config import Config
@@ -33,8 +35,10 @@ def migrated_database():
 
 @pytest.fixture()
 def anonymous_client(migrated_database):
+    stockwise_api._auth_attempts.clear()
     with TestClient(app) as client:
         yield client
+    stockwise_api._auth_attempts.clear()
 
 
 @pytest.fixture()
@@ -92,6 +96,66 @@ def test_openapi_documents_versioned_routes(anonymous_client):
     assert response.status_code == 200
     assert response.json()["info"]["title"] == "StockWise API"
     assert "/api/v1/plans/optimize" in response.json()["paths"]
+
+
+def test_health_endpoints_are_public_and_report_database_state(anonymous_client):
+    health = anonymous_client.get(f"{BASE}/health")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "max_upload_bytes": MAX_FILE_BYTES}
+    database = anonymous_client.get(f"{BASE}/health/db")
+    assert database.status_code == 200
+    assert database.json() == {"status": "ok", "database": "ok"}
+
+
+def test_basic_health_check_does_not_open_a_database_connection(anonymous_client, monkeypatch):
+    def fail_if_connected():
+        raise AssertionError("basic health check must not connect to PostgreSQL")
+    monkeypatch.setattr(stockwise_api.engine, "connect", fail_if_connected)
+    response = anonymous_client.get(f"{BASE}/health")
+    assert response.status_code == 200
+
+
+def test_signup_and_login_are_limited_to_ten_attempts_per_minute(anonymous_client):
+    stockwise_api._auth_attempts.clear()
+    client = anonymous_client
+    csrf = client.get(f"{BASE}/auth/csrf").json()["csrf_token"]
+    headers = {"X-CSRF-Token": csrf}
+    for attempt in range(10):
+        response = client.post(f"{BASE}/auth/login", headers=headers,
+                               json={"email": f"missing-{attempt}@example.com", "password": "wrong-pass-42"})
+        assert response.status_code == 401
+    limited = client.post(f"{BASE}/auth/login", headers=headers,
+                          json={"email": "last@example.com", "password": "wrong-pass-42"})
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) > 0
+    assert limited.json()["error"]["code"] == "rate_limited"
+    signup = client.post(f"{BASE}/auth/signup", headers=headers,
+                         json={"email": f"limited-{uuid.uuid4().hex}@example.com", "password": "correct-horse-51"})
+    assert signup.status_code == 429
+    stockwise_api._auth_attempts.clear()
+
+
+def test_production_proxy_ip_uses_first_forwarded_address(monkeypatch):
+    monkeypatch.setattr(stockwise_api, "settings", replace(stockwise_api.settings, environment="production"))
+    request = Request({
+        "type": "http", "method": "GET", "path": "/",
+        "headers": [(b"x-forwarded-for", b"198.51.100.10, 10.0.0.2")],
+        "client": ("10.0.0.3", 1234), "server": ("test", 80), "scheme": "http",
+        "query_string": b"", "http_version": "1.1",
+    })
+    assert stockwise_api.client_ip(request) == "198.51.100.10"
+
+
+def test_production_auth_cookies_are_secure_and_http_only(anonymous_client, monkeypatch):
+    client = anonymous_client
+    csrf = client.get(f"{BASE}/auth/csrf").json()["csrf_token"]
+    monkeypatch.setattr(stockwise_api, "settings", replace(stockwise_api.settings, environment="production"))
+    response = client.post(f"{BASE}/auth/signup", headers={"X-CSRF-Token": csrf},
+                           json={"email": f"secure-{uuid.uuid4().hex}@example.com", "password": "secure-pass-51"})
+    assert response.status_code == 201, response.text
+    set_cookie = response.headers.get_list("set-cookie")
+    assert any("stockwise_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie for cookie in set_cookie)
+    assert any("stockwise_csrf=" in cookie and "Secure" in cookie for cookie in set_cookie)
 
 
 def test_signup_sets_http_only_session_and_me_returns_own_account(seller):

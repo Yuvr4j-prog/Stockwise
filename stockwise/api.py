@@ -5,8 +5,12 @@ import csv
 import io
 import logging
 import secrets
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from math import ceil
 from typing import Any, Literal
 
 import jwt
@@ -17,19 +21,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool, field_validator
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from stockwise.config import load_settings
+from stockwise.config import format_upload_limit, load_settings
 from stockwise.forecasting import forecast
 from stockwise.imports import MAX_FILE_BYTES, ParsedUpload, UploadValidationError, parse_upload
 from stockwise.models import Plan, PlanItem, Product, SalesWeek, SellerSettings, UploadBatch, User
 from stockwise.optimizer import InfeasiblePlan, ProductOption, solve_plan
 
 settings = load_settings()
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(settings.database_url, pool_pre_ping=True, pool_recycle=300,
+                       connect_args={"connect_timeout": 8})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 password_hasher = PasswordHasher()
 JWT_ALGORITHM = "HS256"
@@ -37,6 +42,10 @@ JWT_COOKIE = "stockwise_session"
 CSRF_COOKIE = "stockwise_csrf"
 JWT_TTL_SECONDS = 60 * 60 * 12
 logger = logging.getLogger("stockwise.api")
+AUTH_RATE_LIMIT = 10
+AUTH_RATE_WINDOW_SECONDS = 60
+_auth_attempts: dict[str, deque[float]] = defaultdict(deque)
+_auth_attempts_lock = threading.Lock()
 
 app = FastAPI(title="StockWise API", version="1.0.0", docs_url="/docs", openapi_url="/openapi.json")
 app.add_middleware(
@@ -83,6 +92,23 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> Response
     return JSONResponse({"error": {"code": "internal_error", "message": "An unexpected server error occurred", "details": None}}, status_code=500)
 
 
+@app.get("/api/v1/health")
+def health() -> dict[str, int | str]:
+    return {"status": "ok", "max_upload_bytes": MAX_FILE_BYTES}
+
+
+@app.get("/api/v1/health/db")
+def health_db() -> Response:
+    from fastapi.responses import JSONResponse
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        logger.warning("Database health check failed", exc_info=True)
+        return JSONResponse({"status": "error", "database": "unavailable"}, status_code=503)
+    return JSONResponse({"status": "ok", "database": "ok"})
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -95,6 +121,36 @@ def csrf_guard(request: Request, x_csrf_token: str | None = Header(default=None,
     cookie = request.cookies.get(CSRF_COOKIE)
     if not cookie or not x_csrf_token or not secrets.compare_digest(cookie, x_csrf_token):
         raise _error(403, "csrf_failed", "A matching CSRF cookie and X-CSRF-Token header are required")
+
+
+def client_ip(request: Request) -> str:
+    if settings.environment.lower() in {"production", "prod"}:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded.strip():
+            return forwarded.split(",", 1)[0].strip()[:64]
+    return request.client.host if request.client else "unknown"
+
+
+def auth_attempt_limit(request: Request) -> None:
+    now = time.monotonic()
+    address = client_ip(request)
+    with _auth_attempts_lock:
+        attempts = _auth_attempts[address]
+        while attempts and now - attempts[0] >= AUTH_RATE_WINDOW_SECONDS:
+            attempts.popleft()
+        if len(attempts) >= AUTH_RATE_LIMIT:
+            retry_after = max(1, ceil(AUTH_RATE_WINDOW_SECONDS - (now - attempts[0])))
+            raise HTTPException(status_code=429, detail={
+                "code": "rate_limited",
+                "message": "Too many sign-in attempts. Try again shortly",
+                "details": None,
+            }, headers={"Retry-After": str(retry_after)})
+        attempts.append(now)
+        if len(_auth_attempts) > 4096:
+            expired = [key for key, queue in _auth_attempts.items()
+                       if not queue or now - queue[-1] >= AUTH_RATE_WINDOW_SECONDS]
+            for key in expired:
+                _auth_attempts.pop(key, None)
 
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -232,7 +288,7 @@ def csrf_token(response: Response) -> dict[str, str]:
     return {"csrf_token": token}
 
 
-@app.post("/api/v1/auth/signup", status_code=201, dependencies=[Depends(csrf_guard)])
+@app.post("/api/v1/auth/signup", status_code=201, dependencies=[Depends(csrf_guard), Depends(auth_attempt_limit)])
 def signup(data: AuthInput, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
     user = User(email=str(data.email).lower(), password_hash=password_hasher.hash(data.password))
     user.settings = SellerSettings(currency="INR")
@@ -247,7 +303,7 @@ def signup(data: AuthInput, response: Response, db: Session = Depends(get_db)) -
     return {"id": user.id, "email": user.email}
 
 
-@app.post("/api/v1/auth/login", dependencies=[Depends(csrf_guard)])
+@app.post("/api/v1/auth/login", dependencies=[Depends(csrf_guard), Depends(auth_attempt_limit)])
 def login(data: AuthInput, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
     user = db.scalar(select(User).where(User.email == str(data.email).lower()))
     try:
@@ -327,7 +383,7 @@ def _seller_products(db: Session, user_id: int) -> list[Product]:
 def _read_upload(upload: UploadFile) -> tuple[str, bytes]:
     data = upload.file.read(MAX_FILE_BYTES + 1)
     if len(data) > MAX_FILE_BYTES:
-        raise _error(413, "file_too_large", "Upload exceeds the 10 MiB limit")
+        raise _error(413, "file_too_large", f"Upload exceeds the {format_upload_limit(MAX_FILE_BYTES)} limit")
     return upload.filename or "upload", data
 
 
