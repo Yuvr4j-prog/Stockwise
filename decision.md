@@ -1,0 +1,43 @@
+# StockWise decisions
+
+## 2026-11-21 · Stage 1 · Repository and package
+
+- **Decision:** Use a `stockwise` installable Python package, `pyproject.toml`, root `alembic/`, and `tests/`. **Alternatives:** single-file modules, monorepo placeholders. **Reason:** imports stay separable and later API code can consume pure modules. **Trade-off:** package install is needed before running tests.
+- **Decision:** Keep Stage 1 limited to domain/data modules, migration, tests, and requested project notes. **Alternatives:** scaffold later frontend/API/compose folders. **Reason:** scope explicitly excludes them. **Trade-off:** this stage cannot yet be run as a complete app.
+- **Assumption:** Python 3.12 is the target; `scipy.optimize.milp` and PostgreSQL are runtime requirements. Dependencies are declared, not vendored.
+
+## 2026-11-21 · Stage 1 · Persistence
+
+- **Decision:** Model `users`, `products`, `sales_weeks`, `upload_batches`, `plans`, and `plan_items` in SQLAlchemy 2.0, with Alembic revision `0001_stage1`. **Alternatives:** SQLModel, ORM-only `create_all`. **Reason:** requested stack and reproducible Postgres schema migration. **Trade-off:** migration URL must be configured for a real deployment.
+- **Decision:** Use integer primary keys, seller foreign keys with cascade deletion, seller-scoped unique SKUs, and unique product/week sales. Keep costs/profits as `Numeric(12,2)` and retain immutable plan inputs as PostgreSQL JSONB. **Alternatives:** float money and generic JSON. **Reason:** avoid persisted money rounding drift and preserve reproducible plans. **Trade-off:** JSONB is Postgres-specific.
+- **Decision:** Represent weeks as Monday `DATE`; record upload timestamp and associate sales rows with their upload batch. **Alternatives:** week string or batch replacement. **Reason:** ISO calendar weeks and append/history provenance. A repeated product/week is constrained unique and must be resolved by a later upload policy. **Trade-off:** the future upload endpoint must define upsert behavior.
+- **Decision:** Put `stockout_flag` on each `sales_weeks` row and keep product min-order/pack-size fields. **Alternatives:** encode these in upload data. **Reason:** these are seller-maintained planning facts, not weekly sales values.
+
+## 2026-11-21 · Stage 1 · Forecasting
+
+- **Decision:** Implement moving average, simple exponential smoothing, and rolling one-step MAE selection with default window 3 and alpha 0.4. Ties deterministically favor exponential smoothing (lexicographic name order). With fewer than three nonblank observations return last week with `low` confidence. **Alternatives:** trend fit, random tie resolution, training a model. **Reason:** matches the specified transparent, request-time methods. **Trade-off:** small samples have weak evidence and forecasts can be fractional.
+- **Decision:** Treat blank periods as omitted observations while retaining zero as a valid observation; when stockout flags are passed, clamp the forecast to at least the largest flagged sales observation. **Alternatives:** impute blank weeks as zero or treat stockout sales as exact demand. **Reason:** blank is missing and stockout sales are lower bounds. **Trade-off:** a single high censored observation can lift the forecast; no censored-demand model is inferred.
+- **Decision:** Use `Forecast` as an immutable result containing float demand, method, confidence, observed history and optional MAE. **Alternatives:** return a scalar. **Reason:** callers need to display forecasting provenance.
+
+## 2026-11-21 · Stage 1 · Optimization
+
+- **Decision:** Use SciPy `milp` with one integer variable per product pack count, maximize profit under spend, demand, minimum, pack and optional storage bounds. Compute a separate SKU-tie-broken greedy profit-per-cost baseline. **Alternatives:** OR-Tools, custom branch-and-bound, greedy-only. **Reason:** the user specified SciPy MILP and greedy comparison. **Trade-off:** exact result depends on SciPy/HiGHS availability.
+- **Decision:** Convert units into integer pack counts, floor risk-adjusted/overridden demand to whole units, default risk multiplier 1.0, and disable optional products with nonpositive unit profit. Forced include means at least one complete pack unless a larger minimum is provided; forced exclude is zero. **Alternatives:** allow partial packs or buy loss-making optional goods. **Reason:** preserve whole-unit and sensible positive-return behavior. **Trade-off:** pack flooring can leave a small demand remainder unbuyable; forced include with no positive margin is infeasible.
+- **Decision:** Expose infeasible mandatory bounds as `InfeasiblePlan`, malformed inputs as `ValueError`, and solver faults as `RuntimeError`. Ties are left to deterministic solver behavior; the greedy tie break is SKU order. **Alternatives:** silently relax minima. **Reason:** constraints should not be changed without seller consent.
+- **Assumption:** ROI means expected profit divided by money spent (zero if nothing is spent); storage limit counts physical units, not packs.
+
+## 2026-11-21 · Stage 1 · Upload validation
+
+- **Decision:** Parse CSV using the standard library and XLSX with openpyxl in read-only/data-only mode; return typed product and ISO-Monday sales rows. Accept exactly the specified wide columns and long columns (`sku,week,units_sold`); long imports require existing SKU names supplied by the caller. **Alternatives:** pandas coercion, silently ignore unknown columns/SKUs. **Reason:** strict row visibility and small focused dependencies. **Trade-off:** long imports intentionally do not create/update product metadata.
+- **Decision:** Enforce 10 MiB and 10,000 data-row limits; blank wide cells are omitted, zero is kept, duplicate SKU/week keys and malformed rows are errors. **Alternatives:** partial successful import. **Reason:** never silently lose or accept bad rows. **Trade-off:** a single bad row rejects the batch with all collected validation errors.
+
+## 2026-11-21 · Stage 1 · Verification environment
+
+- **Decision:** Initialize Git and commit Stage 1 if the workspace allows it. **Environment finding:** the Git repository was successfully initialized after an access escalation. Python execution is currently unresolved because `python`/`python3` resolve to inaccessible Windows Store aliases. **Trade-off:** tests and commit must not be claimed until an actual Python runtime is available and they are run.
+
+## 2026-11-21 · Stage 1 · Verification resolution
+
+- **Supersedes the runtime issue above:** Found the bundled Python 3.12 runtime at the Codex runtime path, created a workspace-local `.venv`, and installed dependencies there after network access was approved. Actual pytest and Alembic offline generation now run. `.venv` is ignored by Git. **Trade-off:** first-time installs require package index access; later users can install from `pyproject.toml`.
+- **Decision:** Stream CSV/XLSX rows only through the 10,000-row limit, returning an explicit file error once exceeded. **Alternatives:** materialize the whole worksheet before checking. **Reason:** bound import memory for large workbooks.
+- **Decision:** Recommendation reasons distinguish seller exclusions, zero demand, nonpositive margin, demand cap, budget exhaustion, and budget/storage limits. **Alternatives:** one generic reason for every zero/partial allocation. **Reason:** make the computed choice explainable at row level.
+- **Verification:** `.venv` pytest run completed with `23 passed`; Alembic PostgreSQL offline SQL generation completed successfully. A live database migration was not run because PostgreSQL is not running in this workspace. The first two development test runs each exposed one assertion/wording mismatch; both were corrected before the final successful run.
