@@ -100,6 +100,7 @@ python -m alembic check
 python -m pytest -q
 Set-Location frontend
 npm ci
+npx playwright install chromium
 npm run typecheck
 npm run build
 Set-Location ..

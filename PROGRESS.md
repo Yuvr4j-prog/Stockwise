@@ -42,6 +42,7 @@ python -m alembic check
 python -m pytest -o addopts=-q -rs
 Set-Location frontend
 npm ci
+npx playwright install chromium
 npm run typecheck
 npm run build
 $env:PLAYWRIGHT_BASE_URL = "http://127.0.0.1:8080"
