@@ -58,7 +58,7 @@ This is a **MILP**. The objective and constraints are linear; pack quantities `y
 - The budget row coefficient is `cost_i × pack_size_i`; its upper bound is `budget`.
 - Optional storage row coefficients are `pack_size_i`; its upper bound is `storage_limit`.
 - MOQ and forced-inclusion links are `y_i - cap_packs_i*z_i ≤ 0` and `y_i - min_packs_i*z_i ≥ 0`. Forced inclusion sets the binary lower/upper bound to one. Forced exclusion sets the pack cap to zero.
-- `bounds_lo`/`bounds_hi` were replaced with zero lower pack counts plus linking rows; this allows optional MOQ products to remain at zero.
+- SciPy `Bounds` gives pack variables zero lower bounds and their adjusted demand upper bounds; binary linking rows allow optional MOQ products to remain at zero.
 - The post-solve outputs and greedy comparison are reconstructed in whole units from pack counts.
 
 ### Edge cases and solver behavior
@@ -87,6 +87,10 @@ The greedy baseline sorts by unit profit/cost (zero-cost items first, then SKU) 
 With one-unit packs and one-unit demand caps, let A cost ₹10/profit ₹60, B cost ₹6/profit ₹33, C cost ₹6/profit ₹33, and budget ₹12. Greedy takes A first (ratio 6 versus 5.5), then cannot afford B/C, earning ₹60. The exact solver takes B+C and earns ₹66. `tests/test_optimizer.py::test_milp_matches_hand_solved_example_and_greedy_is_suboptimal` checks that output.
 
 The seeded 300-case property-style test enumerates every feasible quantity for small random instances with MOQs, pack sizes, storage limits, risk modes, overrides, and forced include/exclude choices, then asserts the SciPy MILP profit is optimal or correctly infeasible.
+
+## Stage 2: FastAPI, auth, and persistence endpoints
+
+**No LPP involved.** The API scopes seller data, converts saved history/products into the Stage 1.5 forecasting and MILP inputs, and persists each recommendation and its inputs.
 
 ## Stage 3: frontend (not built)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -22,6 +22,7 @@ class User(Base):
     products: Mapped[list[Product]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     batches: Mapped[list[UploadBatch]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     plans: Mapped[list[Plan]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    settings: Mapped[SellerSettings | None] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
 
 
 class Product(Base):
@@ -29,7 +30,9 @@ class Product(Base):
     __table_args__ = (UniqueConstraint("owner_id", "sku", name="uq_products_owner_sku"),
                       CheckConstraint("cost_price >= 0", name="ck_products_cost_nonnegative"),
                       CheckConstraint("min_order_qty >= 0", name="ck_products_min_order_nonnegative"),
-                      CheckConstraint("pack_size >= 1", name="ck_products_pack_size_positive"))
+                      CheckConstraint("pack_size >= 1", name="ck_products_pack_size_positive"),
+                      CheckConstraint("forecast_override IS NULL OR forecast_override >= 0",
+                                      name="ck_products_forecast_override_nonnegative"))
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     sku: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -39,6 +42,8 @@ class Product(Base):
     selling_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     min_order_qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     pack_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    forecast_override: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     owner: Mapped[User] = relationship(back_populates="products")
     sales: Mapped[list[SalesWeek]] = relationship(back_populates="product", cascade="all, delete-orphan")
@@ -74,6 +79,7 @@ class Plan(Base):
     budget: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     risk_mode: Mapped[str] = mapped_column(String(20), nullable=False)
     inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    results: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     total_spent: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     total_profit: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -91,3 +97,11 @@ class PlanItem(Base):
     spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     expected_profit: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     plan: Mapped[Plan] = relationship(back_populates="items")
+
+
+class SellerSettings(Base):
+    __tablename__ = "seller_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="INR")
+    owner: Mapped[User] = relationship(back_populates="settings")

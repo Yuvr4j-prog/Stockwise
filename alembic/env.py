@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool
 from stockwise.models import Base
 
 config = context.config
-database_url = os.environ.get("STOCKWISE_DATABASE_URL")
+database_url = os.environ.get("DATABASE_URL") or os.environ.get("STOCKWISE_DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 if config.config_file_name:
