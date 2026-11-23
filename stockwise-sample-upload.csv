@@ -1,0 +1,5 @@
+name,cost_per_unit,price_per_unit,2026-W44,2026-W44_stockout,2026-W45,2026-W45_stockout,2026-W46,2026-W46_stockout,2026-W47,2026-W47_stockout
+Basmati Rice 1kg,92,118,41,false,38,false,44,false,40,false
+Sunflower Oil 1L,118,142,26,false,24,false,15,true,27,false
+Toor Dal 1kg,128,155,19,false,22,false,20,false,23,false
+Tea Powder 250g,86,110,34,false,31,false,36,false,18,true

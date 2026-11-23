@@ -16,7 +16,7 @@ from stockwise.config import format_upload_limit, load_max_upload_bytes
 MAX_FILE_BYTES = load_max_upload_bytes()
 MAX_ROWS = 10_000
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-BASE = {"sku", "name", "cost_price", "profit_per_unit"}
+BASE = {"sku", "name", "cost_price", "profit_per_unit", "selling_price"}
 NUMBER_RE = re.compile(r"^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$")
 
 
@@ -33,6 +33,7 @@ class SalesRow:
     sku: str
     week_start: date
     units_sold: int
+    stockout_flag: bool = False
 
 
 @dataclass
@@ -97,6 +98,17 @@ def _rows(data: bytes, filename: str) -> tuple[list[str], list[list[object]]]:
         raise
     except Exception as exc:
         raise UploadValidationError([_issue(0, "file", filename, f"could not read file: {exc}")]) from exc
+    aliases = {"product_name": "name", "cost_per_unit": "cost_price", "unit_cost": "cost_price",
+               "price_per_unit": "selling_price", "selling_price": "selling_price", "unit_price": "selling_price"}
+    normalized = []
+    for header in headers:
+        raw = header.strip()
+        week_header = re.fullmatch(r"(\d{4})-[Ww](\d{2})(_stockout)?", raw, re.IGNORECASE)
+        if week_header:
+            normalized.append(f"{week_header.group(1)}-W{week_header.group(2)}{week_header.group(3) or ''}")
+        else:
+            normalized.append(aliases.get(raw.lower(), raw.lower()))
+    headers = normalized
     return headers, body
 
 
@@ -136,6 +148,13 @@ def _units(value: object) -> int:
     return int(number)
 
 
+def _stockout(value: object) -> bool:
+    text = str(value or "").strip().casefold()
+    if text in {"", "false", "no", "0", "n"}: return False
+    if text in {"true", "yes", "1", "y"}: return True
+    raise ValueError("stockout flag must be true/false, yes/no, or 1/0")
+
+
 def parse_upload(data: bytes, filename: str, existing_products: Mapping[str, str] | None = None) -> ParsedUpload:
     headers, rows = _rows(data, filename)
     errors: list[dict[str, object]] = []
@@ -154,9 +173,10 @@ def parse_upload(data: bytes, filename: str, existing_products: Mapping[str, str
     is_long = "week" in headers or "units_sold" in headers
     if is_long:
         expected = {"sku", "week", "units_sold"}
+        allowed = expected | {"stockout_flag"}
         for missing in sorted(expected - set(headers)):
             errors.append(_issue(1, missing, None, "required long-format column is missing"))
-        for unexpected in sorted(set(headers) - expected):
+        for unexpected in sorted(set(headers) - allowed):
             errors.append(_issue(1, unexpected, unexpected, "unexpected column in long format"))
         parsed = ParsedUpload("long")
         known = existing_products or {}
@@ -188,16 +208,31 @@ def parse_upload(data: bytes, filename: str, existing_products: Mapping[str, str
                 else:
                     seen.add(key)
                     if units is not None:
-                        parsed.sales.append(SalesRow(sku, week, units))
+                        try:
+                            flag = _stockout(vals.get("stockout_flag"))
+                        except ValueError as exc:
+                            errors.append(_issue(line, "stockout_flag", vals.get("stockout_flag"), str(exc)))
+                            continue
+                        parsed.sales.append(SalesRow(sku, week, units, flag))
         if errors:
             raise UploadValidationError(errors, parsed.warnings)
         return parsed
 
-    for column in sorted(BASE - set(headers)):
+    required = {"name", "cost_price"}
+    if "profit_per_unit" not in headers and "selling_price" not in headers:
+        required.add("profit_per_unit")
+    for column in sorted(required - set(headers)):
         errors.append(_issue(1, column, None, "required wide-format column is missing"))
     week_cols: dict[int, date] = {}
+    stockout_cols: dict[date, int] = {}
     for idx, header in enumerate(headers):
         if header in BASE:
+            continue
+        if header.endswith("_stockout"):
+            try:
+                stockout_cols[_week(header[:-9])] = idx
+            except ValueError as exc:
+                errors.append(_issue(1, header, header, str(exc)))
             continue
         try:
             week_cols[idx] = _week(header)
@@ -217,10 +252,11 @@ def parse_upload(data: bytes, filename: str, existing_products: Mapping[str, str
         name = str(vals.get("name") or "").strip()
         row_valid = True
         if not sku:
-            errors.append(_issue(line, "sku", vals.get("sku"), "SKU is required"))
-            row_valid = False
-        elif sku in seen_skus:
-            errors.append(_issue(line, "sku", vals.get("sku"), "duplicate SKU"))
+            match = next((key for key, old_name in (existing_products or {}).items()
+                          if old_name.strip().casefold() == name.casefold()), None)
+            sku = match or "AUTO-" + re.sub(r"[^A-Z0-9]+", "-", name.upper()).strip("-")[:80]
+        if sku in seen_skus:
+            errors.append(_issue(line, "sku", vals.get("sku") or name, "duplicate product identifier"))
             row_valid = False
         else:
             seen_skus.add(sku)
@@ -235,9 +271,15 @@ def parse_upload(data: bytes, filename: str, existing_products: Mapping[str, str
             errors.append(_issue(line, "cost_price", vals.get("cost_price"), str(exc)))
             row_valid = False
         try:
-            profit = _money(vals.get("profit_per_unit"), "profit_per_unit", non_negative=False)
+            if "profit_per_unit" in headers and str(vals.get("profit_per_unit") or "").strip():
+                profit = _money(vals.get("profit_per_unit"), "profit_per_unit", non_negative=False)
+            elif "selling_price" in headers:
+                selling = _money(vals.get("selling_price"), "selling_price")
+                profit = selling - (cost or 0)
+            else:
+                raise ValueError("profit_per_unit or price_per_unit is required")
         except (ValueError, TypeError) as exc:
-            errors.append(_issue(line, "profit_per_unit", vals.get("profit_per_unit"), str(exc)))
+            errors.append(_issue(line, "selling_price", vals.get("selling_price"), str(exc)))
             row_valid = False
 
         nonblank_weeks = 0
@@ -255,7 +297,13 @@ def parse_upload(data: bytes, filename: str, existing_products: Mapping[str, str
                 row_valid = False
                 continue
             if sku:
-                parsed.sales.append(SalesRow(sku, week, sales_units))
+                try:
+                    flag = _stockout(row[stockout_cols[week]]) if week in stockout_cols else False
+                except ValueError as exc:
+                    errors.append(_issue(line, headers[stockout_cols[week]], row[stockout_cols[week]], str(exc)))
+                    row_valid = False
+                    continue
+                parsed.sales.append(SalesRow(sku, week, sales_units, flag))
         if nonblank_weeks and blank_weeks and len(week_cols) > 1:
             for column, value in blank_weeks:
                 parsed.warnings.append(_issue(line, column, value, "blank week skipped while this product has sales in other weeks"))

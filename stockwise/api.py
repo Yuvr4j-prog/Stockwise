@@ -232,6 +232,12 @@ class StockoutUpdate(BaseModel):
     stockout_flag: StrictBool
 
 
+class SalesWeekInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    week_start: date
+    units_sold: int = Field(ge=0)
+
+
 class ProductConstraint(BaseModel):
     model_config = ConfigDict(extra="forbid")
     product_id: int
@@ -372,7 +378,7 @@ def delete_product(product_id: int, user: User = Depends(current_user), db: Sess
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise _error(409, "product_in_saved_plan", "This product appears in a saved plan and cannot be deleted")
+        raise _error(409, "product_delete_conflict", "Product could not be deleted because it is still referenced")
     return Response(status_code=204)
 
 
@@ -445,9 +451,10 @@ def upload_commit(file: UploadFile = File(...), user: User = Depends(current_use
             old = db.scalar(select(SalesWeek).where(SalesWeek.product_id == product.id, SalesWeek.week_start == row.week_start))
             if old is None:
                 db.add(SalesWeek(product_id=product.id, week_start=row.week_start, units_sold=row.units_sold,
-                                 upload_batch_id=batch.id))
+                                 stockout_flag=row.stockout_flag, upload_batch_id=batch.id))
             else:
                 old.units_sold = row.units_sold
+                old.stockout_flag = row.stockout_flag
                 old.upload_batch_id = batch.id
         db.commit()
     except HTTPException:
@@ -473,7 +480,7 @@ def upload_template(template_format: Literal["wide", "long"]) -> Response:
             week_day = monday - timedelta(weeks=offset)
             iso = week_day.isocalendar()
             labels.append(f"{iso.year}-W{iso.week:02d}")
-        writer.writerow(["sku", "name", "cost_price", "profit_per_unit", *labels])
+        writer.writerow(["name", "cost_per_unit", "price_per_unit", *[cell for week in labels for cell in (week, f"{week}_stockout")]])
     from fastapi.responses import Response as FastAPIResponse
     return FastAPIResponse(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=stockwise-{template_format}-template.csv"})
 
@@ -483,6 +490,25 @@ def sales_history(product_id: int, user: User = Depends(current_user), db: Sessi
     product = _seller_product(db, user.id, product_id)
     rows = db.scalars(select(SalesWeek).where(SalesWeek.product_id == product.id).order_by(SalesWeek.week_start)).all()
     return [{"week_start": row.week_start, "units_sold": row.units_sold, "stockout_flag": row.stockout_flag} for row in rows]
+
+
+@app.post("/api/v1/products/{product_id}/sales", dependencies=[Depends(csrf_guard)])
+def save_sales_week(product_id: int, data: SalesWeekInput,
+                    user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    product = _seller_product(db, user.id, product_id)
+    if data.week_start.weekday() != 0:
+        raise _error(422, "invalid_week_start", "Sales week must start on Monday")
+    row = db.scalar(select(SalesWeek).where(
+        SalesWeek.product_id == product.id, SalesWeek.week_start == data.week_start,
+    ))
+    if row is None:
+        row = SalesWeek(product_id=product.id, week_start=data.week_start, units_sold=data.units_sold)
+        db.add(row)
+    else:
+        row.units_sold = data.units_sold
+    db.commit()
+    db.refresh(row)
+    return {"week_start": row.week_start, "units_sold": row.units_sold, "stockout_flag": row.stockout_flag}
 
 
 @app.patch("/api/v1/products/{product_id}/sales/{week_start}", dependencies=[Depends(csrf_guard)])
@@ -568,6 +594,8 @@ def optimize(data: OptimizeInput, user: User = Depends(current_user), db: Sessio
             demand=float(fc["forecast"]), min_qty=product.min_order_qty, pack_size=product.pack_size,
             force_include=flags.force_include, force_exclude=flags.force_exclude,
         ))
+    if products and not any(option.demand > 0 for option in options):
+        raise _error(422, "no_forecast_demand", "No forecast demand is available. Add weekly sales or a positive forecast override before building a plan.")
     try:
         result = solve_plan(options, float(data.budget), storage_limit=data.storage_limit, risk_mode=data.risk_mode)
     except InfeasiblePlan as exc:
@@ -606,6 +634,14 @@ def get_plan(plan_id: int, user: User = Depends(current_user), db: Session = Dep
     plan = _owned_plan(db, user.id, plan_id)
     return {"id": plan.id, "created_at": plan.created_at, "budget": str(plan.budget),
             "risk_mode": plan.risk_mode, "inputs": plan.inputs, **plan.results}
+
+
+@app.delete("/api/v1/plans/{plan_id}", status_code=204)
+def delete_plan(plan_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+    plan = _owned_plan(db, user.id, plan_id)
+    db.delete(plan)
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.get("/api/v1/plans/{plan_id}/export.csv")

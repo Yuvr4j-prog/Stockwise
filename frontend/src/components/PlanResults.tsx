@@ -3,18 +3,16 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, apiBaseUrl, ApiError } from "@/lib/api";
-import { decimal, money, quantity, shortDate } from "@/lib/format";
+import { api, ApiError } from "@/lib/api";
+import { money, quantity, shortDate } from "@/lib/format";
 import { copy } from "@/lib/strings";
 import type { Plan } from "@/lib/types";
-import { Icon } from "@/components/Icons";
 
 export default function PlanResults() {
   const params = useParams<{ id: string }>();
   const [plan, setPlan] = useState<Plan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -31,41 +29,16 @@ export default function PlanResults() {
 
   const orders = useMemo(() => plan?.items.filter((item) => item.quantity > 0) ?? [], [plan]);
 
-  async function downloadCsv() {
-    if (!plan) return;
-    setExporting(true);
-    try {
-      const response = await fetch(`${apiBaseUrl()}/api/v1/plans/${plan.id}/export.csv`, { credentials: "include" });
-      if (!response.ok) throw new Error(copy.common.errorFallback);
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = `stockwise-plan-${plan.id}.csv`;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch (problem) {
-      setError(problem instanceof Error ? problem.message : copy.common.errorFallback);
-    } finally {
-      setExporting(false);
-    }
-  }
-
   if (loading) return <div className="loading-state">{copy.common.loading}</div>;
   if (!plan) return <div className="page-content"><p className="error-message" role="alert">{error || copy.common.noData}</p><Link href="/plans" className="button button-secondary">{copy.results.backToPlans}</Link></div>;
 
   return (
     <div className="page-content">
       <header className="page-intro">
-        <div><p className="eyebrow">{copy.results.eyebrow}</p><h1 className="page-heading">{copy.results.title}</h1><p className="page-description">{copy.savedPlans.created}: {shortDate(plan.created_at)} · {copy.planner.risk}: {copy.planner[plan.risk_mode]}</p></div>
-        <div className="result-tools">
-          <Link className="button button-secondary" href="/plans/new">{copy.results.buildAnother}</Link>
-          <button className="button" type="button" onClick={downloadCsv} disabled={exporting}><Icon name="download" width={14} />{exporting ? copy.common.loading : copy.results.export}</button>
-        </div>
+        <div><p className="eyebrow">{copy.results.eyebrow}</p><h1 className="page-heading">{copy.results.title}</h1><p className="page-description">{copy.savedPlans.created}: {shortDate(plan.created_at)}</p></div>
       </header>
       {error ? <p className="error-message" role="alert">{error}</p> : null}
+      {!plan.forecasts.some((forecast) => forecast.forecast > 0) ? <p className="error-message" role="status">{copy.results.noForecastDemand}</p> : !plan.items.some((item) => item.quantity > 0) ? <p className="error-message" role="status">{copy.results.noAllocation}</p> : null}
 
       <div className="results-grid">
         <section className="result-main" aria-labelledby="allocation-heading">
@@ -74,19 +47,16 @@ export default function PlanResults() {
             <p className="mobile-table-note">{copy.common.scrollTable}</p>
             <div className="table-scroll">
               <table className="data-table results-table" aria-label={copy.results.orderTable}>
-                <thead><tr><th className="result-mobile-hide">{copy.results.sku}</th><th>{copy.results.product}</th><th className="result-mobile-hide numeric">{copy.results.forecast}</th><th className="numeric">{copy.results.quantity}</th><th className="result-mobile-hide numeric">{copy.results.spend}</th><th className="result-mobile-hide numeric">{copy.results.profit}</th><th className="result-mobile-hide">{copy.results.reason}</th></tr></thead>
+                <thead><tr><th>{copy.results.product}</th><th className="numeric">{copy.results.quantity}</th><th className="numeric">{copy.results.spend}</th><th className="numeric">{copy.results.profit}</th></tr></thead>
                 <tbody>{plan.items.map((item) => {
-                  const productName = plan.forecasts.find((row) => row.sku === item.sku)?.name ?? item.sku;
+                  const productName = plan.forecasts.find((row) => row.sku === item.sku)?.name ?? copy.results.product;
                   return <tr key={item.sku}>
-                    <td className="result-mobile-hide sku-cell">{item.sku}</td><td className="product-name">{productName}</td>
-                    <td className="result-mobile-hide numeric mono-value">{decimal(item.forecast)}</td>
-                    <td className="numeric mono-value buy-units-cell">{quantity(item.quantity)}</td><td className="result-mobile-hide numeric">{money(item.spend)}</td><td className="result-mobile-hide numeric profit-positive">{money(item.expected_profit)}</td>
-                    <td className="result-mobile-hide"><span className="reason-text">{item.reason}</span></td>
+                    <td className="product-name">{productName}</td>
+                    <td className="numeric mono-value buy-units-cell">{quantity(item.quantity)}</td><td className="numeric">{money(item.spend)}</td><td className="numeric profit-positive">{money(item.expected_profit)}</td>
                   </tr>;
                 })}</tbody>
               </table>
             </div>
-            <div className="table-caption"><span>{copy.results.greedy}</span><span className="numeric">{copy.results.greedyProfit}: {money(plan.greedy_profit)}</span></div>
           </div>
           <p className="result-note">{copy.results.note}</p>
         </section>
@@ -96,7 +66,7 @@ export default function PlanResults() {
           <div className="slip-items">
             <div className="slip-items-heading"><span>{copy.results.slipItems}</span><span>{copy.results.quantity}</span></div>
             {orders.length ? orders.map((item) => {
-              const productName = plan.forecasts.find((row) => row.sku === item.sku)?.name ?? item.sku;
+              const productName = plan.forecasts.find((row) => row.sku === item.sku)?.name ?? copy.results.product;
               return <div className="slip-item" key={item.sku}><span>{productName}</span><span>{quantity(item.quantity)}</span></div>;
             }) : <p className="slip-empty">{copy.results.noOrders}</p>}
           </div>
@@ -108,7 +78,6 @@ export default function PlanResults() {
           <div className="slip-foot">{copy.common.currencyNote}</div>
         </aside>
       </div>
-      <div className="button-row" style={{ marginTop: 20 }}><Link className="button button-secondary" href="/plans">{copy.results.backToPlans}</Link></div>
     </div>
   );
 }

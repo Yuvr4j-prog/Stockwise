@@ -17,6 +17,16 @@ def test_wide_csv_keeps_zero_skips_blank_and_parses_iso_mondays():
     assert result.warnings[0]["column"] == "2026-W45"
 
 
+def test_sku_free_wide_csv_with_price_aliases_and_stockout_columns():
+    data = ("name,cost_per_unit,price_per_unit,2026-W44,2026-W44_stockout,2026-W45,2026-W45_stockout\n"
+            "Rice 1kg,92,118,4,false,2,true\n").encode()
+    result = parse_upload(data, "stockwise-sample-upload.csv")
+    assert result.products[0].name == "Rice 1kg"
+    assert result.products[0].cost_price == 92
+    assert result.products[0].profit_per_unit == 26
+    assert [(row.units_sold, row.stockout_flag) for row in result.sales] == [(4, False), (2, True)]
+
+
 def test_long_csv_requires_known_skus_and_rejects_duplicate_weeks():
     data = b"sku,week,units_sold\nR1,2026-W44,3\nR1,2026-W44,0\n"
     with pytest.raises(UploadValidationError) as exc:

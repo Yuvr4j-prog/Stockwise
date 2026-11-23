@@ -12,7 +12,6 @@ import { Icon } from "@/components/Icons";
 const navLinks = [
   { href: "/products", label: copy.nav.products, icon: "products" as const },
   { href: "/plans", label: copy.nav.plans, icon: "plans" as const },
-  { href: "/settings", label: copy.nav.settings, icon: "settings" as const },
 ];
 
 export default function WorkspaceFrame({ children }: { children: React.ReactNode }) {

@@ -98,10 +98,10 @@ export default function UploadPanel({ onCommitted }: { onCommitted: () => void }
     }
   }
 
-  function downloadTemplate(format: "wide" | "long") {
+  function downloadTemplate() {
     const anchor = document.createElement("a");
-    anchor.href = `${apiBaseUrl()}/api/v1/uploads/templates/${format}`;
-    anchor.download = `stockwise-${format}-template.csv`;
+    anchor.href = `${apiBaseUrl()}/api/v1/uploads/templates/wide`;
+    anchor.download = "stockwise-wide-template.csv";
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
@@ -111,10 +111,7 @@ export default function UploadPanel({ onCommitted }: { onCommitted: () => void }
     <section className="paper-panel upload-panel" aria-labelledby="upload-heading">
       <div className="panel-head">
         <h2 className="panel-title" id="upload-heading">{copy.products.uploadPreview}</h2>
-        <div className="button-row">
-          <button className="button button-quiet button-small" type="button" onClick={() => downloadTemplate("wide")}>{copy.products.downloadWide}</button>
-          <button className="button button-quiet button-small" type="button" onClick={() => downloadTemplate("long")}>{copy.products.downloadLong}</button>
-        </div>
+        <button className="button button-quiet button-small" type="button" onClick={downloadTemplate}>{copy.products.downloadWide}</button>
       </div>
       <div className="upload-actions" style={{ borderTop: 0, paddingBottom: 0 }}>
         <span className="field-hint">{uploadFormat}</span>

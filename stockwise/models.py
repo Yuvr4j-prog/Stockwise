@@ -91,7 +91,7 @@ class PlanItem(Base):
     __tablename__ = "plan_items"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"), nullable=False, index=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     sku: Mapped[str] = mapped_column(String(100), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
