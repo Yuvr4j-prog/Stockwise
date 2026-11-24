@@ -88,11 +88,11 @@ def test_upload_warnings_include_row_column_value_and_message():
 
 
 def test_parser_collects_all_cell_errors_with_row_column_value_message():
-    data = b"sku,name,cost_price,profit_per_unit,2026-W44,2026-W45\nR1,,-5,NaN,1.5,-1\n"
+    data = b"name,cost_per_unit,price_per_unit,2026-W44,2026-W45\n,-5,NaN,1.5,-1\n"
     with pytest.raises(UploadValidationError) as exc:
         parse_upload(data, "bad.csv")
     assert [(e["row"], e["column"], e["value"]) for e in exc.value.errors] == [
-        (2, "name", ""), (2, "cost_price", "-5"), (2, "profit_per_unit", "NaN"),
+        (2, "name", ""), (2, "cost_price", "-5"), (2, "selling_price", "NaN"),
         (2, "2026-W44", "1.5"), (2, "2026-W45", "-1")]
     assert all(isinstance(e["message"], str) and e["message"] for e in exc.value.errors)
 

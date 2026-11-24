@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import uuid
 import asyncio
+import csv
 from dataclasses import replace
 from datetime import date
 from io import BytesIO
@@ -314,13 +315,13 @@ def test_upload_preview_validates_and_writes_nothing(seller):
 
 def test_upload_preview_returns_every_error_with_location(seller):
     client, headers, *_ = seller
-    invalid = b"sku,name,cost_price,profit_per_unit,2026-W54\nR1,Rice,-1,NaN,-3\n"
+    invalid = b"name,cost_per_unit,price_per_unit,2026-W54\nRice,-1,NaN,-3\n"
     response = client.post(f"{BASE}/uploads/preview", headers=headers,
                            files={"file": ("bad.csv", invalid, "text/csv")})
     assert response.status_code == 422
     details = response.json()["error"]["details"]["errors"]
     assert {(item["row"], item["column"]) for item in details} >= {
-        (1, "2026-W54"), (2, "cost_price"), (2, "profit_per_unit")}
+        (1, "2026-W54"), (2, "cost_price"), (2, "selling_price")}
 
 
 def test_upload_preview_returns_nonfatal_warnings_alongside_errors(seller):
@@ -390,7 +391,14 @@ def test_csv_template_downloads(template_format, anonymous_client):
     response = anonymous_client.get(f"{BASE}/uploads/templates/{template_format}")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
-    assert "sku" in response.text.splitlines()[0]
+    header = next(csv.reader([response.text]))
+    if template_format == "wide":
+        assert header[:3] == ["name", "cost_per_unit", "price_per_unit"]
+        assert "sku" not in header
+        assert len(header) == 11
+        assert all(header[index + 1] == f"{header[index]}_stockout" for index in (3, 5, 7, 9))
+    else:
+        assert header == ["sku", "week", "units_sold"]
 
 
 def test_upload_size_limit_is_enforced_by_api(seller):
