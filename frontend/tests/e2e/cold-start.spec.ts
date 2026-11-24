@@ -5,7 +5,7 @@ test("login explains a sleeping backend and retries its health check", async ({ 
   let checks = 0;
   await page.route("**/api/v1/health", async (route) => {
     checks += 1;
-    if (checks === 1) await route.fulfill({ status: 504, body: "Gateway timeout" });
+    if (checks === 1) await route.fulfill({ status: 503, body: "Service unavailable" });
     else await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok", max_upload_bytes: 4 * 1024 * 1024 }) });
   });
   await page.route("**/api/v1/health/db", async (route) => {
@@ -29,7 +29,7 @@ test("an authenticated read retries after a transient proxy timeout", async ({ p
   });
   await page.route("**/api/v1/auth/me", async (route) => {
     reads += 1;
-    if (reads === 1) await route.fulfill({ status: 504, body: "Gateway timeout" });
+    if (reads === 1) await route.fulfill({ status: 503, body: "Service unavailable" });
     else await route.continue();
   });
 

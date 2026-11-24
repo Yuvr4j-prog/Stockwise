@@ -19,7 +19,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
     let active = true;
     const unsubscribe = subscribeBackendWake((value) => { if (active) setWaking(value); });
     void wakeBackend().catch((problem: unknown) => {
-      if (active) setError(problem instanceof ApiError ? problem.message : copy.auth.wakeFailed);
+      if (active) setError(problem instanceof ApiError ? problem.message : copy.auth.requestFailed);
     });
     return () => { active = false; unsubscribe(); };
   }, []);

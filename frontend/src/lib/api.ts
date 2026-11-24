@@ -10,9 +10,10 @@ let healthPromise: Promise<void> | null = null;
 let backendWaking = false;
 const wakeListeners = new Set<(waking: boolean) => void>();
 const HEALTH_TTL_MS = 5 * 60 * 1000;
-const HEALTH_DEADLINE_MS = 90 * 1000;
+const HEALTH_DEADLINE_MS = 120 * 1000;
 const API_GET_TIMEOUT_MS = 25 * 1000;
-const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+const TRANSIENT_STATUSES = new Set([503]);
+const PROXY_FAILURE_STATUSES = new Set([404, 502, 504]);
 
 export class ApiError extends Error {
   status: number;
@@ -26,6 +27,22 @@ export class ApiError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+function logApiFailure(url: string, status?: number, problem?: unknown) {
+  if (process.env.NODE_ENV !== "development") return;
+  if (status !== undefined) console.error(`[StockWise API] ${url} returned HTTP ${status}`);
+  else console.error(`[StockWise API] ${url} did not complete`, problem);
+}
+
+function proxyFailure(url: string, status: number): ApiError {
+  logApiFailure(url, status);
+  return new ApiError(copy.auth.proxyFailed(status), status, "api_proxy_unreachable", { url, status });
+}
+
+function requestFailure(url: string, problem: unknown): ApiError {
+  logApiFailure(url, undefined, problem);
+  return new ApiError(copy.auth.wakeFailed, 503, "backend_unavailable", { url });
 }
 
 function notifyWake(waking: boolean) {
@@ -59,7 +76,11 @@ async function checkHealthUntilReady(deadline: number): Promise<void> {
           signal: controller.signal,
         });
         if (!response.ok) {
-          if (!TRANSIENT_STATUSES.has(response.status)) throw new ApiError(copy.common.errorFallback, response.status);
+          if (PROXY_FAILURE_STATUSES.has(response.status)) throw proxyFailure(url, response.status);
+          if (!TRANSIENT_STATUSES.has(response.status)) {
+            logApiFailure(url, response.status);
+            throw new ApiError(copy.common.errorFallback, response.status);
+          }
           shouldRetry = true;
           break;
         }
@@ -68,6 +89,7 @@ async function checkHealthUntilReady(deadline: number): Promise<void> {
         if (!(problem instanceof TypeError) && !(problem instanceof DOMException) && !(problem instanceof ApiError)) {
           throw problem;
         }
+        if (!(problem instanceof ApiError)) logApiFailure(url, undefined, problem);
         shouldRetry = true;
         break;
       } finally {
@@ -111,10 +133,13 @@ async function getWithWakeRetry(url: string, init: RequestInit, deadline: number
     const timeout = window.setTimeout(() => controller.abort(), Math.min(API_GET_TIMEOUT_MS, deadline - Date.now()));
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
+      if (PROXY_FAILURE_STATUSES.has(response.status)) throw proxyFailure(url, response.status);
       if (!TRANSIENT_STATUSES.has(response.status)) return response;
       await response.body?.cancel();
     } catch (problem) {
+      if (problem instanceof ApiError && problem.code === "api_proxy_unreachable") throw problem;
       if (!(problem instanceof TypeError) && !(problem instanceof DOMException)) throw problem;
+      logApiFailure(url, undefined, problem);
     } finally {
       window.clearTimeout(timeout);
     }
@@ -131,8 +156,19 @@ async function getWithWakeRetry(url: string, init: RequestInit, deadline: number
 }
 
 async function csrf(): Promise<string> {
-  const response = await fetch(`${baseUrl}/api/v1/auth/csrf`, { credentials: "include", cache: "no-store" });
-  if (!response.ok) throw new ApiError(copy.common.errorFallback, response.status);
+  const url = `${baseUrl}/api/v1/auth/csrf`;
+  let response: Response;
+  try {
+    response = await fetch(url, { credentials: "include", cache: "no-store" });
+  } catch (problem) {
+    if (problem instanceof TypeError || problem instanceof DOMException) throw requestFailure(url, problem);
+    throw problem;
+  }
+  if (PROXY_FAILURE_STATUSES.has(response.status)) throw proxyFailure(url, response.status);
+  if (!response.ok) {
+    logApiFailure(url, response.status);
+    throw new ApiError(copy.common.errorFallback, response.status);
+  }
   const data = (await response.json()) as { csrf_token: string };
   csrfToken = data.csrf_token;
   return csrfToken;
@@ -166,11 +202,22 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
         ? options.body as FormData
         : JSON.stringify(options.body),
   };
-  const response = method === "GET" ? await getWithWakeRetry(url, init, deadline) : await fetch(url, init);
+  let response: Response;
+  try {
+    response = method === "GET" ? await getWithWakeRetry(url, init, deadline) : await fetch(url, init);
+  } catch (problem) {
+    if (method !== "GET" && (problem instanceof TypeError || problem instanceof DOMException)) {
+      throw requestFailure(url, problem);
+    }
+    throw problem;
+  }
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => null) as ApiErrorBody | T | null;
   if (!response.ok) {
     const problem = data as ApiErrorBody | null;
+    if (response.status === 404 && !problem?.error) throw proxyFailure(url, response.status);
+    if (response.status === 502 || response.status === 504) throw proxyFailure(url, response.status);
+    logApiFailure(url, response.status);
     throw new ApiError(
       problem?.error?.message ?? copy.common.errorFallback,
       response.status,
