@@ -10,10 +10,11 @@ let healthPromise: Promise<void> | null = null;
 let backendWaking = false;
 const wakeListeners = new Set<(waking: boolean) => void>();
 const HEALTH_TTL_MS = 5 * 60 * 1000;
-const HEALTH_DEADLINE_MS = 120 * 1000;
+// Render Free can cold-start the web, API, and database separately.
+const HEALTH_DEADLINE_MS = 5 * 60 * 1000;
 const API_GET_TIMEOUT_MS = 25 * 1000;
-const TRANSIENT_STATUSES = new Set([503]);
-const PROXY_FAILURE_STATUSES = new Set([404, 502, 504]);
+const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+const PROXY_FAILURE_STATUSES = new Set([404]);
 
 export class ApiError extends Error {
   status: number;

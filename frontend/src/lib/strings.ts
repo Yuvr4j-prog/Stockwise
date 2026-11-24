@@ -50,7 +50,7 @@ export const copy = {
     invalidCredentials: "Email or password is incorrect.",
     emailInUse: "That email already has an account.",
     wakingUp: "The server is waking up. This can take up to a minute.",
-    wakeFailed: "The API did not answer within two minutes. Try again in a moment.",
+    wakeFailed: "The API is still starting. Leave this page open and try again in a few minutes.",
     proxyFailed: (status: number) => `The website could not reach the API (HTTP ${status}). Check the deployment and try again.`,
     requestFailed: "The request could not be completed. Check your connection and try again.",
   },
